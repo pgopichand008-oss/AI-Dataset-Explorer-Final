@@ -478,7 +478,7 @@ def render(
         <div class="hero-card">
 
             <div class="hero-kicker">
-                EXPLAINABLE INTELLIGENCE
+                ADAPTIVE DATASET INTELLIGENCE
             </div>
 
             <h1>
@@ -486,11 +486,11 @@ def render(
             </h1>
 
             <p>
-                An explainable intelligence layer that analyzes
-                dataset structure, quality, patterns, and
-                machine-learning readiness to generate
-                prioritized findings and actionable
-                recommendations.
+                The agent analyzes dataset structure, quality,
+                statistical patterns, and machine-learning
+                readiness to identify important changes,
+                reconsider previous findings, and recommend
+                the next best analytical action.
             </p>
 
         </div>
