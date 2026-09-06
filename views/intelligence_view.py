@@ -51,6 +51,39 @@ def _safe_dataframe(value):
     return pd.DataFrame()
 
 
+def _make_display_safe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create a display-only copy of a DataFrame.
+
+    This prevents Streamlit/PyArrow serialization errors
+    when a column contains mixed values such as:
+
+        21
+        24
+        Unknown
+        30
+
+    The original DataFrame is never modified.
+    """
+
+    display_df = df.copy()
+
+    for column in display_df.columns:
+
+        if pd.api.types.is_object_dtype(
+            display_df[column]
+        ) or pd.api.types.is_string_dtype(
+            display_df[column]
+        ):
+
+            display_df[column] = (
+                display_df[column]
+                .astype("string")
+            )
+
+    return display_df
+
+
 def _format_value(value):
     """Safely format values for display."""
 
@@ -58,6 +91,10 @@ def _format_value(value):
         return ""
 
     if isinstance(value, float):
+
+        if pd.isna(value):
+            return ""
+
         return round(value, 3)
 
     return value
@@ -78,6 +115,7 @@ def _find_column(
     }
 
     for name in possible_names:
+
         key = name.strip().lower()
 
         if key in normalized:
@@ -90,24 +128,30 @@ def _display_table(
     df: pd.DataFrame,
     height: int = 400,
 ):
-    """Display a dataframe safely."""
+    """Display a DataFrame safely in Streamlit."""
 
     if df.empty:
+
         st.info(
             "No information is available for this section."
         )
+
         return
 
-    display_df = df.copy()
+    # Create display-only copy.
+    display_df = _make_display_safe(df)
 
+    # Format values.
     for column in display_df.columns:
-        display_df[column] = display_df[column].apply(
-            _format_value
+
+        display_df[column] = (
+            display_df[column]
+            .map(_format_value)
         )
 
     st.dataframe(
         display_df,
-        use_container_width=True,
+        width="stretch",
         height=height,
     )
 
@@ -121,15 +165,26 @@ def _render_column_intelligence(
 ):
     section_header(
         "Column Intelligence",
-        "The agent interprets the role, type, quality, and analytical importance of each column.",
+        (
+            "The agent interprets the role, type, quality, "
+            "and analytical importance of each column."
+        ),
     )
 
     if column_intelligence_df.empty:
+
         info_card(
             "No Column Intelligence",
-            "The analysis did not produce column-level intelligence.",
-            "Try uploading a dataset with valid tabular data.",
+            (
+                "The analysis did not produce "
+                "column-level intelligence."
+            ),
+            (
+                "Try uploading a dataset with "
+                "valid tabular data."
+            ),
         )
+
         return
 
     _display_table(
@@ -147,7 +202,10 @@ def _render_agent_decisions(
 ):
     section_header(
         "Agent Decisions",
-        "Prioritized decisions generated from the dataset profile and quality signals.",
+        (
+            "Prioritized decisions generated from the "
+            "dataset profile and quality signals."
+        ),
     )
 
     decisions_df = _safe_dataframe(
@@ -155,11 +213,19 @@ def _render_agent_decisions(
     )
 
     if decisions_df.empty:
+
         info_card(
             "No Agent Decisions",
-            "The intelligence engine did not generate decision records.",
-            "The dataset may not contain enough signals for automated prioritization.",
+            (
+                "The intelligence engine did not "
+                "generate decision records."
+            ),
+            (
+                "The dataset may not contain enough "
+                "signals for automated prioritization."
+            ),
         )
+
         return
 
     _display_table(
@@ -177,15 +243,26 @@ def _render_visualization_plan(
 ):
     section_header(
         "Smart Visualization Plan",
-        "Recommended visualizations selected from the structure and characteristics of the dataset.",
+        (
+            "Recommended visualizations selected from "
+            "the structure and characteristics of the dataset."
+        ),
     )
 
     if visual_plan_df.empty:
+
         info_card(
             "No Visualization Recommendations",
-            "The agent did not generate a visualization plan.",
-            "More suitable numeric, categorical, or temporal columns may be required.",
+            (
+                "The agent did not generate "
+                "a visualization plan."
+            ),
+            (
+                "More suitable numeric, categorical, "
+                "or temporal columns may be required."
+            ),
         )
+
         return
 
     _display_table(
@@ -203,7 +280,10 @@ def _render_target_candidates(
 ):
     section_header(
         "Potential ML Targets",
-        "Columns that may be suitable as prediction targets.",
+        (
+            "Columns that may be suitable "
+            "as prediction targets."
+        ),
     )
 
     targets_df = _safe_dataframe(
@@ -211,11 +291,19 @@ def _render_target_candidates(
     )
 
     if targets_df.empty:
+
         info_card(
             "No Clear Target Candidate",
-            "The agent could not identify a strong machine-learning target.",
-            "You can still explore the dataset using the other intelligence tools.",
+            (
+                "The agent could not identify "
+                "a strong machine-learning target."
+            ),
+            (
+                "You can still explore the dataset "
+                "using the other intelligence tools."
+            ),
         )
+
         return
 
     _display_table(
@@ -234,14 +322,17 @@ def _render_important_findings(
 ):
     section_header(
         "Important Findings",
-        "Critical and high-priority observations that deserve attention.",
+        (
+            "Critical and high-priority observations "
+            "that deserve attention."
+        ),
     )
 
     findings = []
 
-    # --------------------------------------------------------
+    # ========================================================
     # COLUMN INTELLIGENCE FINDINGS
-    # --------------------------------------------------------
+    # ========================================================
 
     if not column_intelligence_df.empty:
 
@@ -280,7 +371,9 @@ def _render_important_findings(
             and finding_column is not None
         ):
 
-            for _, row in column_intelligence_df.iterrows():
+            for _, row in (
+                column_intelligence_df.iterrows()
+            ):
 
                 severity = str(
                     row[severity_column]
@@ -296,6 +389,7 @@ def _render_important_findings(
                     column_name = ""
 
                     if column_column is not None:
+
                         column_name = str(
                             row[column_column]
                         )
@@ -305,6 +399,7 @@ def _render_important_findings(
                     )
 
                     if column_name:
+
                         finding_text = (
                             f"{column_name}: "
                             f"{finding_text}"
@@ -317,9 +412,9 @@ def _render_important_findings(
                         }
                     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # AGENT DECISION FINDINGS
-    # --------------------------------------------------------
+    # ========================================================
 
     decisions_df = _safe_dataframe(
         agent_decisions
@@ -355,7 +450,9 @@ def _render_important_findings(
             and finding_column is not None
         ):
 
-            for _, row in decisions_df.iterrows():
+            for _, row in (
+                decisions_df.iterrows()
+            ):
 
                 severity = str(
                     row[severity_column]
@@ -377,9 +474,9 @@ def _render_important_findings(
                         }
                     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # DISPLAY
-    # --------------------------------------------------------
+    # ========================================================
 
     if not findings:
 
@@ -394,7 +491,9 @@ def _render_important_findings(
 
         return
 
-    # Remove duplicate findings
+    # ========================================================
+    # REMOVE DUPLICATE FINDINGS
+    # ========================================================
 
     unique_findings = []
 
@@ -418,7 +517,9 @@ def _render_important_findings(
             finding
         )
 
-    # Display maximum useful findings
+    # ========================================================
+    # DISPLAY MAXIMUM USEFUL FINDINGS
+    # ========================================================
 
     for finding in unique_findings[:10]:
 
@@ -453,52 +554,7 @@ def render(
 ):
     """
     Render the Dataset Intelligence workspace.
-
-    Parameters
-    ----------
-    column_intelligence_df:
-        DataFrame containing column-level intelligence.
-
-    agent_decisions:
-        Agent-generated decisions and recommendations.
-
-    visual_plan_df:
-        DataFrame containing recommended visualizations.
-
-    target_candidates:
-        Potential machine-learning target columns.
     """
-
-    # ========================================================
-    # HEADER
-    # ========================================================
-
-    st.markdown(
-        """
-        <div class="hero-card">
-
-            <div class="hero-kicker">
-                ADAPTIVE DATASET INTELLIGENCE
-            </div>
-
-            <h1>
-                Dataset Intelligence
-            </h1>
-
-            <p>
-                The agent analyzes dataset structure, quality,
-                statistical patterns, and machine-learning
-                readiness to identify important changes,
-                reconsider previous findings, and recommend
-                the next best analytical action.
-            </p>
-
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.write("")
 
     # ========================================================
     # QUICK SUMMARY
