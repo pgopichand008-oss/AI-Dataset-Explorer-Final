@@ -83,12 +83,15 @@ from components.design_system import inject_design_system
 
 from views import (
     overview_view,
+    profile_view,
+    calculation_view,
     quality_view,
     visual_view,
     intelligence_view,
     ml_view,
     ai_view,
     change_view,
+    report_view,
 )
 
 
@@ -153,10 +156,10 @@ api_key = os.getenv("GEMINI_API_KEY")
 
 
 # ============================================================
-# GLOBAL HEADER
+# GLOBAL HEADER & TOP BANNER
 # ============================================================
 
-layout.render_hero()
+layout.render_top_banner(client, api_key)
 
 
 # ============================================================
@@ -169,35 +172,41 @@ uploaded_file, previous_file, updated_file = (
 
 
 # ============================================================
-# SIDEBAR SERVICE STATUS
+# ============================================================
+# SIDEBAR SYSTEM CAPABILITIES
 # ============================================================
 
 with st.sidebar:
 
-    st.markdown("### System Status")
+    st.markdown(
+        """
+        <div style="font-size: 0.74rem; font-weight: 800; text-transform: uppercase; color: #a0aec0; letter-spacing: 0.05em; margin-bottom: 8px;">
+            ⚡ SYSTEM CAPABILITIES
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    if api_key:
+    capabilities = [
+        ("📊 Dataset Profiling", "READY"),
+        ("🧮 Calculations Engine", "READY"),
+        ("📈 2D / 3D Visualization", "READY"),
+        ("🛡️ Quality Intelligence", "READY"),
+        ("🔄 Dataset Comparison", "ACTIVE" if (previous_file and updated_file) else "READY"),
+        ("🧠 Adaptive Intelligence", "READY"),
+        ("📑 Executive Reporting", "READY"),
+    ]
 
-        st.success(
-            "🟢 Gemini AI connected"
-        )
-
-    else:
-
-        st.warning(
-            "🟡 Gemini API not connected"
-        )
-
-    if ML_ENGINE_AVAILABLE:
-
-        st.success(
-            "🟢 ML engine available"
-        )
-
-    else:
-
-        st.warning(
-            "🟡 ML engine unavailable"
+    for label, status in capabilities:
+        badge_kind = "success" if status in ["READY", "ACTIVE"] else "info"
+        st.markdown(
+            f"""
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 0.78rem; border-bottom: 1px solid rgba(255,255,255,0.04);">
+                <span>{label}</span>
+                <span class="status-pill status-{badge_kind}">{status}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
 
@@ -656,21 +665,27 @@ cards.finding_card(
 
 (
     overview_tab,
+    profile_tab,
+    calc_tab,
     quality_tab,
     visual_tab,
     intelligence_tab,
     ml_tab,
     ai_tab,
     change_tab,
+    report_tab,
 ) = st.tabs(
     [
-        "Overview",
-        "Quality",
-        "Visuals",
-        "Intelligence",
-        "Machine Learning",
-        "Executive AI",
-        "Change Intelligence",
+        "🏠 Overview",
+        "📋 Profile",
+        "🧮 Calculation Lab",
+        "🛡️ Quality",
+        "📊 Visuals",
+        "🧠 Intelligence",
+        "🤖 Machine Learning",
+        "⚡ Executive AI",
+        "🔄 Adaptive Changes",
+        "📑 Executive Report",
     ]
 )
 
@@ -695,6 +710,33 @@ with overview_tab:
         quality_status,
         ml_score,
         ml_status,
+    )
+
+
+# ============================================================
+# PROFILE VIEW
+# ============================================================
+
+with profile_tab:
+
+    profile_view.render(
+        df,
+        column_intelligence_df,
+        numerical_summary,
+        categorical_summary_df,
+    )
+
+
+# ============================================================
+# CALCULATION LAB VIEW
+# ============================================================
+
+with calc_tab:
+
+    calculation_view.render(
+        df,
+        df_prev=load_dataset(previous_file) if previous_file else None,
+        theme="dark",
     )
 
 
@@ -825,6 +867,32 @@ with change_tab:
         most_important_finding,
         load_dataset,
         run_intelligence_analysis,
+    )
+
+
+# ============================================================
+# EXECUTIVE REPORT VIEW
+# ============================================================
+
+with report_tab:
+
+    report_view.render(
+        df,
+        uploaded_file,
+        previous_file,
+        updated_file,
+        profile,
+        quality_findings,
+        agent_decisions,
+        executive_summary,
+        numerical_summary,
+        categorical_summary_df,
+        correlation_pairs,
+        anomaly_df,
+        column_intelligence_df,
+        quality_score,
+        ml_score,
+        client,
     )
 
 

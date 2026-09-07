@@ -332,6 +332,11 @@ def compare_datasets(old_df, new_df):
             )
 
             if combined_score >= 0.55:
+                reason = "Similar names and compatible value patterns."
+                if name_score >= 0.8:
+                    reason = "Strongly similar column names."
+                elif value_score >= 0.8:
+                    reason = "High overlap in column values."
 
                 possible_renames.append({
                     "old_column": old_column,
@@ -347,7 +352,8 @@ def compare_datasets(old_df, new_df):
                     "confidence": round(
                         combined_score * 100,
                         1
-                    )
+                    ),
+                    "reason": reason,
                 })
 
     # Detect invalid/mixed values

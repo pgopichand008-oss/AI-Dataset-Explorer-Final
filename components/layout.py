@@ -1,15 +1,39 @@
 """
-components/layout.py
-
-Global chrome: theme toggle, sidebar workspace controls,
-pipeline status rail, and the top-line metric row.
+components/layout.py — Global SaaS layout header, sidebar controls, status rail, and metric row.
 """
 
 from __future__ import annotations
-
 import streamlit as st
 
 from components import cards, state
+
+
+# ============================================================
+# TOP APPLICATION BANNER
+# ============================================================
+
+def render_top_banner(client, api_key: str | None) -> None:
+    """Renders the compact top application header."""
+    engine_status = '<span class="status-pill status-info">● Workspace Engine Active</span>'
+
+    st.markdown(
+        f"""
+        <div class="top-app-banner">
+            <div>
+                <div class="top-app-title">
+                    🧬 AI DATASET EXPLORER
+                </div>
+                <div class="top-app-subtitle">
+                    Data Science & Intelligence Workspace
+                </div>
+            </div>
+            <div class="top-status-pills">
+                {engine_status}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ============================================================
@@ -18,12 +42,7 @@ from components import cards, state
 
 def render_theme_toggle() -> None:
     current = state.get_theme()
-
-    label = (
-        "🌙 Dark mode"
-        if current == "dark"
-        else "☀️ Light mode"
-    )
+    label = "🌙 Dark" if current == "dark" else "☀️ Light"
 
     if st.sidebar.toggle(
         label,
@@ -36,104 +55,126 @@ def render_theme_toggle() -> None:
 
 
 # ============================================================
-# HERO HEADER
-# ============================================================
-
-def render_hero() -> None:
-    """
-    Global hero header disabled.
-
-    The application can still call render_hero()
-    without displaying the old hero section.
-    """
-    return
-
-
-# ============================================================
-# SIDEBAR
+# REDESIGNED SIDEBAR & DATA INPUT PANEL
 # ============================================================
 
 def render_sidebar():
     """
-    Renders the sidebar and returns:
-
+    Renders the compact Data Scientist sidebar and returns:
     (current_file, previous_file, updated_file)
     """
-
     with st.sidebar:
-
-        # ----------------------------------------------------
-        # WORKSPACE
-        # ----------------------------------------------------
-
-        st.markdown("## Workspace")
+        st.markdown(
+            """
+            <div style="margin-bottom: 8px;">
+                <div style="font-size: 1.05rem; font-weight: 800; letter-spacing: -0.02em; color: #f2f3f5;">
+                    🧬 AI DATASET EXPLORER
+                </div>
+                <div style="font-size: 0.72rem; color: #9aa1b1; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">
+                    DATA INTELLIGENCE WORKSPACE
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
         render_theme_toggle()
 
         st.divider()
 
         # ----------------------------------------------------
-        # CURRENT DATASET
+        # DISTINCTIVE DATA INPUT UPLOAD PANEL
         # ----------------------------------------------------
-
-        st.markdown("### Dataset")
+        st.markdown(
+            """
+            <div class="data-input-panel">
+                <div class="data-input-header">
+                    📥 DATA INPUT PANEL
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
         current_file = st.file_uploader(
-            "Upload current dataset",
+            "Upload Active Dataset (CSV / Excel)",
             type=["csv", "xlsx"],
             key="current_dataset",
         )
 
-        st.caption(
-            "CSV or Excel — activates the full analysis pipeline."
-        )
+        if current_file:
+            st.markdown(
+                f"""
+                <div style="background: rgba(61, 220, 151, 0.12); border: 1px solid rgba(61, 220, 151, 0.3); border-radius: 8px; padding: 6px 10px; font-size: 0.76rem; margin-bottom: 8px;">
+                    🟢 <strong>{current_file.name}</strong><br>
+                    Size: <code>{round(current_file.size / 1024, 1)} KB</code>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
         st.divider()
 
         # ----------------------------------------------------
-        # CHANGE INTELLIGENCE
+        # VERSION CONTROL / CHANGE INTELLIGENCE INPUTS
         # ----------------------------------------------------
-
-        st.markdown("### Change Intelligence")
+        st.markdown(
+            """
+            <div style="font-size: 0.74rem; font-weight: 800; text-transform: uppercase; color: #38bdf8; letter-spacing: 0.05em; margin-bottom: 6px;">
+                🔄 VERSION CONTROL COMPARISON
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
         previous_file = st.file_uploader(
-            "Previous dataset",
+            "Previous Version (V1)",
             type=["csv", "xlsx"],
             key="previous_dataset",
         )
 
         updated_file = st.file_uploader(
-            "Updated dataset",
+            "Updated Version (V2)",
             type=["csv", "xlsx"],
             key="updated_dataset",
         )
 
-        st.caption(
-            "Compare two versions for structural and quality drift."
-        )
+        if previous_file and updated_file:
+            st.markdown(
+                f"""
+                <div style="background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; padding: 6px 10px; font-size: 0.74rem;">
+                    ↔ <strong>V1:</strong> <code>{previous_file.name}</code><br>
+                    ↔ <strong>V2:</strong> <code>{updated_file.name}</code>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
         st.divider()
 
         # ----------------------------------------------------
-        # PIPELINE
+        # ANALYTICAL VERIFICATION RAIL
         # ----------------------------------------------------
-
-        st.markdown("### Pipeline")
+        st.markdown(
+            """
+            <div style="font-size: 0.74rem; font-weight: 800; text-transform: uppercase; color: #a0aec0; letter-spacing: 0.05em; margin-bottom: 6px;">
+                ⚙️ ANALYTICAL CHECKPOINTS
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
         st.markdown(
             "".join(
-                cards.status_pill(
-                    label,
-                    "success",
-                )
+                cards.status_pill(label, "success")
                 for label in [
-                    "① Discovery",
-                    "② Profiling",
-                    "③ Quality",
-                    "④ Visuals",
-                    "⑤ AI",
-                    "⑥ ML",
-                    "⑦ Changes",
+                    "✓ Schema",
+                    "✓ Stats",
+                    "✓ Outliers",
+                    "✓ Quality",
+                    "✓ Visuals",
+                    "✓ ML Readiness",
+                    "✓ Drift",
                 ]
             ),
             unsafe_allow_html=True,
@@ -141,11 +182,7 @@ def render_sidebar():
 
         st.divider()
 
-    return (
-        current_file,
-        previous_file,
-        updated_file,
-    )
+    return current_file, previous_file, updated_file
 
 
 # ============================================================
@@ -161,12 +198,12 @@ def render_status_row(
 
     section_labels = [
         "Dataset",
-        "Profile",
+        "Schema",
         "Quality",
         "Visuals",
-        "AI",
-        "ML",
-        "Changes",
+        "AI Analyst",
+        "ML Engine",
+        "Drift Compare",
     ]
 
     completed_flags = [
@@ -176,33 +213,16 @@ def render_status_row(
         True,
         client is not None,
         ml_engine_available,
-        (
-            previous_file is not None
-            and updated_file is not None
-        ),
+        (previous_file is not None and updated_file is not None),
     ]
 
     cols = st.columns(7)
-
-    for col, label, completed in zip(
-        cols,
-        section_labels,
-        completed_flags,
-    ):
-
+    for col, label, completed in zip(cols, section_labels, completed_flags):
         with col:
-
             if completed:
-
-                st.success(
-                    f"✓ {label}"
-                )
-
+                st.success(f"✓ {label}")
             else:
-
-                st.warning(
-                    f"○ {label}"
-                )
+                st.warning(f"○ {label}")
 
 
 # ============================================================
@@ -218,66 +238,16 @@ def render_metric_row(
 
     c1, c2, c3, c4 = st.columns(4)
 
-    # --------------------------------------------------------
-    # RECORDS
-    # --------------------------------------------------------
-
     with c1:
-
-        st.metric(
-            "Records",
-            f"{rows:,}",
-        )
-
-    # --------------------------------------------------------
-    # ATTRIBUTES
-    # --------------------------------------------------------
+        st.metric("Total Records", f"{rows:,}")
 
     with c2:
-
-        st.metric(
-            "Attributes",
-            f"{columns:,}",
-        )
-
-    # --------------------------------------------------------
-    # MISSING CELLS
-    # --------------------------------------------------------
+        st.metric("Total Attributes", f"{columns:,}")
 
     with c3:
-
-        missing_pct = (
-            (
-                missing_cells
-                / (rows * columns)
-            ) * 100
-            if rows * columns
-            else 0
-        )
-
-        st.metric(
-            "Missing Cells",
-            f"{missing_cells:,}",
-            f"{missing_pct:.2f}%",
-        )
-
-    # --------------------------------------------------------
-    # DUPLICATE ROWS
-    # --------------------------------------------------------
+        missing_pct = ((missing_cells / (rows * columns)) * 100) if rows * columns else 0
+        st.metric("Missing Cells", f"{missing_cells:,}", f"{missing_pct:.2f}%")
 
     with c4:
-
-        duplicate_pct = (
-            (
-                duplicate_rows
-                / rows
-            ) * 100
-            if rows
-            else 0
-        )
-
-        st.metric(
-            "Duplicate Rows",
-            f"{duplicate_rows:,}",
-            f"{duplicate_pct:.2f}%",
-        )
+        duplicate_pct = ((duplicate_rows / rows) * 100) if rows else 0
+        st.metric("Duplicate Rows", f"{duplicate_rows:,}", f"{duplicate_pct:.2f}%")

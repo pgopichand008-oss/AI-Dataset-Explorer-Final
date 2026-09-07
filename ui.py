@@ -178,12 +178,51 @@ def show_data_preview(df, rows=10):
     )
 
 
+def format_report_headings_for_web(report_text: str) -> str:
+    """Formats Executive AI Report section headings with high-contrast accent blocks in the Streamlit Web UI."""
+    if not report_text:
+        return ""
+
+    target_headings = [
+        "Executive Assessment", "Dataset Overview", "Key Findings",
+        "Data Quality Assessment", "Statistical Insights", "Visualization Insights",
+        "Machine Learning Readiness", "Dataset Changes", "Impact Assessment",
+        "Limitations", "Recommendations", "Next Best Actions", "AI Status",
+    ]
+
+    lines = report_text.splitlines()
+    formatted_lines = []
+
+    for line in lines:
+        stripped = line.lstrip("#").strip()
+        matched = None
+        for th in target_headings:
+            if th.lower() in stripped.lower():
+                matched = th
+                break
+
+        if matched and (line.startswith("#") or line.isupper() or len(stripped) < 40):
+            block = f"""
+<div style="background: linear-gradient(90deg, rgba(99, 102, 241, 0.18), rgba(18, 23, 33, 0.95)); border-left: 4px solid #6366f1; border-radius: 6px; padding: 8px 14px; margin-top: 18px; margin-bottom: 10px;">
+    <div style="font-size: 1.02rem; font-weight: 800; color: #edf2f7; letter-spacing: -0.01em; text-transform: uppercase;">
+        📌 {matched.upper()}
+    </div>
+</div>
+"""
+            formatted_lines.append(block)
+        else:
+            formatted_lines.append(line)
+
+    return "\n".join(formatted_lines)
+
+
 def show_ai_report(report):
-    st.subheader("🤖 AI Executive Report")
+    st.subheader("🤖 Executive Intelligence Briefing")
 
     if not report:
         st.info("No AI report available.")
         return
 
-    st.markdown(report)
+    st.markdown(format_report_headings_for_web(report), unsafe_allow_html=True)
+
     
