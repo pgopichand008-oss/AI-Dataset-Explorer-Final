@@ -188,10 +188,11 @@ with st.sidebar:
     )
 
     capabilities = [
-        ("📊 Dataset Profiling", "READY"),
-        ("🧮 Calculations Engine", "READY"),
-        ("📈 2D / 3D Visualization", "READY"),
-        ("🛡️ Quality Intelligence", "READY"),
+        ("📊 Dataset Analysis", "READY"),
+        ("🧮 Calculation Engine", "READY"),
+        ("📈 Visualization Engine", "READY"),
+        ("📊 Statistical Analysis", "READY"),
+        ("🛡️ Data Quality Analysis", "READY"),
         ("🔄 Dataset Comparison", "ACTIVE" if (previous_file and updated_file) else "READY"),
         ("🧠 Adaptive Intelligence", "READY"),
         ("📑 Executive Reporting", "READY"),
@@ -216,25 +217,24 @@ with st.sidebar:
 
 if uploaded_file is None:
 
-    cards.info_card(
-        "Welcome",
-        "Start with your dataset",
-        (
-            "Upload a CSV or Excel file from the sidebar to activate "
-            "profiling, quality intelligence, visualization, machine "
-            "learning, executive AI, and adaptive change intelligence."
-        ),
-    )
+    st.info("👈 **START HERE**: Open the left **Data Input Panel** (`>>` button in top left) and upload a CSV or Excel dataset to activate the workspace.")
 
-    if (
-        previous_file is not None
-        and updated_file is not None
-    ):
-
-        st.success(
-            "Previous and updated datasets detected. "
-            "Upload a current dataset to open the full workspace."
+    c1, c2 = st.columns(2)
+    with c1:
+        cards.info_card(
+            "📁 Active Dataset Analysis",
+            "Single File Intelligence",
+            "Upload a CSV/XLSX file in the sidebar to explore column profiles, statistical summaries, quality issues, 3D visualizations, and ML readiness.",
         )
+    with c2:
+        cards.info_card(
+            "🔄 Version Control Comparison",
+            "V1 vs V2 Drift Intelligence",
+            "Upload previous and updated dataset versions in the sidebar to detect added/removed attributes, renames, type conflicts, and statistical changes.",
+        )
+
+    if previous_file is not None and updated_file is not None:
+        st.info("Previous and updated datasets detected in sidebar. Upload an active dataset to open the full workspace.")
 
     st.stop()
 

@@ -1,6 +1,6 @@
 """
 components/design_system.py — Compact Data Scientist Workspace design system.
-Enforces compact information-dense typography, dark-mode laboratory theme, and deep CSS styling to eliminate white panels.
+Enforces compact information-dense typography, dark-mode laboratory theme, and targeted CSS styling.
 """
 
 from __future__ import annotations
@@ -38,29 +38,113 @@ def _build_css(t: dict[str, str]) -> str:
     return f"""
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-    html, body, [class*="css"] {{
+    html, body {{
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         letter-spacing: -0.01em;
-        font-size: 13px;
+        font-size: 15px;
+        color-scheme: dark;
     }}
 
-    .stApp {{
+    .stApp, div[data-testid="stAppViewContainer"] {{
         background: {t['bg-app']} !important;
         color: {t['text-primary']} !important;
+        font-size: 15px;
     }}
 
-    .main .block-container {{
-        padding-top: 1rem;
-        padding-bottom: 2.5rem;
-        max-width: 1480px;
+    /* ---------------- STREAMLIT CONTAINER DEFAULT LAYOUT ---------------- */
+    header[data-testid="stHeader"] {{
+        background: transparent !important;
+        z-index: 99999 !important;
     }}
 
-    /* ---------------- COMPACT TYPOGRAPHY ---------------- */
-    h1 {{ font-size: 1.35rem !important; font-weight: 800 !important; letter-spacing: -0.02em !important; margin-bottom: 0.4rem !important; color: {t['text-primary']} !important; }}
-    h2 {{ font-size: 1.15rem !important; font-weight: 750 !important; letter-spacing: -0.015em !important; margin-top: 0.8rem !important; margin-bottom: 0.3rem !important; color: {t['text-primary']} !important; }}
-    h3 {{ font-size: 1.02rem !important; font-weight: 700 !important; margin-top: 0.6rem !important; margin-bottom: 0.25rem !important; color: {t['text-primary']} !important; }}
-    h4 {{ font-size: 0.92rem !important; font-weight: 650 !important; margin-top: 0.5rem !important; margin-bottom: 0.2rem !important; color: {t['text-primary']} !important; }}
-    p, span, label, div {{ font-size: 0.85rem; line-height: 1.45; }}
+    div[data-testid="stDecoration"] {{
+        display: none !important;
+    }}
+
+    section[data-testid="stMain"],
+    section.main,
+    div[data-testid="stAppViewMain"],
+    div[data-testid="stMain"] {{
+        padding-left: 0 !important;
+    }}
+
+    div[data-testid="stMainBlockContainer"],
+    div[data-testid="stBlockContainer"],
+    .main .block-container,
+    .block-container {{
+        max-width: 100% !important;
+        margin-left: 0 !important;
+        margin-right: auto !important;
+        padding-top: 1rem !important;
+        padding-bottom: 2.5rem !important;
+        padding-left: 1.5rem !important;
+        padding-right: 1.5rem !important;
+        width: 100% !important;
+    }}
+
+    /* ---------------- TARGETED TYPOGRAPHY & CARDS ---------------- */
+    h1, .stMarkdown h1 {{ font-size: 1.65rem !important; font-weight: 800 !important; letter-spacing: -0.02em !important; margin-bottom: 0.4rem !important; color: {t['text-primary']} !important; }}
+    h2, .stMarkdown h2 {{ font-size: 1.32rem !important; font-weight: 750 !important; letter-spacing: -0.015em !important; margin-top: 0.8rem !important; margin-bottom: 0.3rem !important; color: {t['text-primary']} !important; }}
+    h3, .stMarkdown h3 {{ font-size: 1.12rem !important; font-weight: 700 !important; margin-top: 0.6rem !important; margin-bottom: 0.25rem !important; color: {t['text-primary']} !important; }}
+    h4, .stMarkdown h4 {{ font-size: 0.98rem !important; font-weight: 650 !important; margin-top: 0.5rem !important; margin-bottom: 0.2rem !important; color: {t['text-primary']} !important; }}
+
+    .stMarkdown p, .stMarkdown li {{
+        font-size: 0.96rem;
+        line-height: 1.55;
+    }}
+
+    /* ---------------- SIDEBAR UPLOAD ONBOARDING HIGHLIGHT ---------------- */
+    @keyframes pulse-glow {{
+        0% {{
+            box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.6);
+            border-color: rgba(99, 102, 241, 0.8);
+        }}
+        70% {{
+            box-shadow: 0 0 0 8px rgba(99, 102, 241, 0);
+            border-color: rgba(56, 189, 248, 0.9);
+        }}
+        100% {{
+            box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+            border-color: rgba(99, 102, 241, 0.8);
+        }}
+    }}
+
+    @keyframes sidebar-btn-pulse {{
+        0% {{
+            box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.8), 0 0 12px rgba(56, 189, 248, 0.6);
+            border-color: #38bdf8;
+            transform: scale(1);
+        }}
+        50% {{
+            box-shadow: 0 0 0 8px rgba(56, 189, 248, 0), 0 0 20px rgba(99, 102, 241, 0.9);
+            border-color: #6366f1;
+            transform: scale(1.08);
+        }}
+        100% {{
+            box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.8), 0 0 12px rgba(56, 189, 248, 0.6);
+            border-color: #38bdf8;
+            transform: scale(1);
+        }}
+    }}
+
+    button[data-testid="stSidebarCollapseButton"],
+    button[data-testid="stSidebarExpandButton"],
+    [data-testid="stSidebarCollapseButton"] button,
+    [data-testid="stSidebarHeader"] button,
+    button[aria-label*="sidebar"] {{
+        border: 2px solid #38bdf8 !important;
+        border-radius: 8px !important;
+        animation: sidebar-btn-pulse 2s infinite ease-in-out !important;
+    }}
+
+    .data-input-panel-highlighted {{
+        background: rgba(99, 102, 241, 0.14);
+        border: 2px solid #6366f1;
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-bottom: 14px;
+        animation: pulse-glow 2s infinite ease-in-out;
+    }}
 
     /* ---------------- TOP BANNER ---------------- */
     .top-app-banner {{
@@ -113,14 +197,14 @@ def _build_css(t: dict[str, str]) -> str:
         background: linear-gradient(90deg, {t['accent']}, {t['accent-2']});
     }}
     .hero-title-text {{
-        font-size: 1.35rem;
+        font-size: 1.45rem;
         font-weight: 800;
         letter-spacing: -0.02em;
         color: {t['text-primary']};
         margin-bottom: 2px;
     }}
     .hero-subtitle-text {{
-        font-size: 0.84rem;
+        font-size: 0.94rem;
         color: {t['text-secondary']};
         margin-bottom: 10px;
     }}
@@ -134,7 +218,7 @@ def _build_css(t: dict[str, str]) -> str:
         margin-bottom: 14px;
     }}
     .data-input-header {{
-        font-size: 0.74rem;
+        font-size: 0.82rem;
         font-weight: 800;
         text-transform: uppercase;
         color: {t['accent-2']};
@@ -155,7 +239,7 @@ def _build_css(t: dict[str, str]) -> str:
         margin-bottom: 10px;
     }}
     .info-card-title {{
-        font-size: 0.68rem;
+        font-size: 0.82rem;
         font-weight: 700;
         color: {t['text-secondary']};
         text-transform: uppercase;
@@ -163,13 +247,13 @@ def _build_css(t: dict[str, str]) -> str:
         margin-bottom: 4px;
     }}
     .info-card-value {{
-        font-size: 1.25rem;
+        font-size: 1.35rem;
         font-weight: 800;
         color: {t['text-primary']};
         letter-spacing: -0.02em;
     }}
     .info-card-description {{
-        font-size: 0.78rem;
+        font-size: 0.92rem;
         color: {t['text-secondary']};
         margin-top: 2px;
     }}
@@ -180,8 +264,8 @@ def _build_css(t: dict[str, str]) -> str:
         padding: 10px 14px;
         margin-bottom: 8px;
         border: 1px solid {t['border']};
-        font-size: 0.82rem;
-        line-height: 1.45;
+        font-size: 0.94rem;
+        line-height: 1.5;
         background: {t['bg-surface']};
     }}
     .finding-success {{ background: {t['success-soft']}; border-color: {t['success']}44; color: {t['text-primary']}; }}
@@ -191,7 +275,7 @@ def _build_css(t: dict[str, str]) -> str:
 
     /* ---------------- SECTION HEADERS ---------------- */
     .section-title {{
-        font-size: 1.15rem;
+        font-size: 1.25rem;
         font-weight: 800;
         color: {t['text-primary']};
         letter-spacing: -0.02em;
@@ -200,36 +284,96 @@ def _build_css(t: dict[str, str]) -> str:
     }}
     .section-subtitle {{
         color: {t['text-secondary']};
-        font-size: 0.82rem;
+        font-size: 0.88rem;
         margin-bottom: 12px;
     }}
 
     /* ---------------- STATUS PILLS ---------------- */
     .status-pill {{
-        display: inline-block;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
         padding: 3px 9px;
         border-radius: 999px;
-        font-size: 0.70rem;
+        font-size: 0.72rem;
         font-weight: 700;
         margin-right: 4px;
         margin-bottom: 4px;
         border: 1px solid transparent;
+        white-space: nowrap;
     }}
     .status-success {{ background: {t['success-soft']}; color: {t['success']}; border-color: {t['success']}44; }}
     .status-warning {{ background: {t['warning-soft']}; color: {t['warning']}; border-color: {t['warning']}44; }}
     .status-error   {{ background: {t['danger-soft']};  color: {t['danger']};  border-color: {t['danger']}44; }}
     .status-info    {{ background: {t['accent-soft']};   color: {t['accent-2']}; border-color: {t['accent']}44; }}
 
-    /* ---------------- STREAMLIT NATIVE OVERRIDES (FIX WHITE PANELS) ---------------- */
-    div[data-testid="stMetric"] {{
+    /* ---------------- STREAMLIT SIDEBAR ---------------- */
+    section[data-testid="stSidebar"] {{
+        background: {t['bg-app']} !important;
+        border-right: 1px solid {t['border-strong']} !important;
+        padding-top: 1rem !important;
+    }}
+    section[data-testid="stSidebar"][aria-expanded="true"] {{
+        min-width: 320px !important;
+        max-width: 350px !important;
+    }}
+    section[data-testid="stSidebar"] * {{ color: {t['text-primary']} !important; }}
+    section[data-testid="stSidebar"] hr {{ border-color: rgba(255,255,255,0.08) !important; margin: 10px 0 !important; }}
+
+    /* ---------------- NAVIGATION TABS (ICONS & ALIGNMENT) ---------------- */
+    .stTabs [data-baseweb="tab-list"], div[data-testid="stTabs"] [data-baseweb="tab-list"] {{
+        gap: 4px;
+        padding: 4px;
+        background: #121721 !important;
+        border-radius: 12px;
+        border: 1px solid #232d3f !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }}
+    .stTabs [data-baseweb="tab"], div[data-testid="stTabs"] [data-baseweb="tab"], button[data-baseweb="tab"] {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 40px;
+        border-radius: 8px;
+        padding: 8px 14px;
+        font-size: 0.88rem !important;
+        font-weight: 650;
+        color: #a0aec0 !important;
+        background: transparent !important;
+        border: 1px solid transparent !important;
+        white-space: nowrap;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }}
+    .stTabs [data-baseweb="tab"]:hover, div[data-testid="stTabs"] [data-baseweb="tab"]:hover {{
+        background: rgba(255, 255, 255, 0.05) !important;
+        color: #edf2f7 !important;
+        border-color: rgba(255, 255, 255, 0.1) !important;
+    }}
+    .stTabs [aria-selected="true"], div[data-testid="stTabs"] [aria-selected="true"] {{
+        background: #1a202c !important;
+        color: #ffffff !important;
+        border: 1px solid #38bdf8 !important;
+        box-shadow: 0 4px 14px rgba(56, 189, 248, 0.2) !important;
+    }}
+    .stTabs [data-baseweb="tab"] p, .stTabs [data-baseweb="tab"] span {{
+        font-size: 0.88rem !important;
+        font-weight: 650 !important;
+        line-height: 1.4 !important;
+        display: inline-flex;
+        align-items: center;
+    }}
+
+    /* ---------------- STREAMLIT NATIVE OVERRIDES ---------------- */
+    div[data-testid="stMetric"], .stMetric {{
         background: {t['bg-surface']} !important;
         border: 1px solid {t['border']} !important;
-        padding: 8px 12px !important;
+        padding: 10px 14px !important;
         border-radius: 10px !important;
         box-shadow: {t['shadow']} !important;
     }}
-    div[data-testid="stMetricLabel"] {{ color: {t['text-secondary']} !important; font-weight: 600; font-size: 0.75rem !important; }}
-    div[data-testid="stMetricValue"] {{ color: {t['text-primary']} !important; font-weight: 800; font-size: 1.15rem !important; }}
+    div[data-testid="stMetricLabel"], .stMetric label {{ color: {t['text-secondary']} !important; font-weight: 600; font-size: 0.78rem !important; }}
+    div[data-testid="stMetricValue"], .stMetric div[data-testid="stMetricValue"] {{ color: {t['text-primary']} !important; font-weight: 800; font-size: 1.25rem !important; }}
 
     /* DATAFRAMES AND TABLES DARK OVERRIDES */
     div[data-testid="stDataFrame"], div[data-testid="stTable"], .dataframe, table {{
@@ -242,56 +386,27 @@ def _build_css(t: dict[str, str]) -> str:
         background-color: {t['bg-surface']} !important;
         color: {t['text-primary']} !important;
         border-color: {t['border']} !important;
+        font-size: 0.85rem !important;
     }}
 
-    .stButton > button {{
+    .stButton > button, div[data-testid="stButton"] > button, div[data-testid="stDownloadButton"] > button {{
         border-radius: 8px;
         font-weight: 650;
-        font-size: 0.82rem !important;
-        padding: 5px 12px !important;
+        font-size: 0.85rem !important;
+        padding: 6px 14px !important;
         border: 1px solid {t['border-strong']} !important;
         background: {t['bg-surface']} !important;
         color: {t['text-primary']} !important;
         transition: all 0.15s ease;
     }}
-    .stButton > button:hover {{
+    .stButton > button:hover, div[data-testid="stButton"] > button:hover {{
         border-color: {t['accent-2']} !important;
         color: {t['accent-2']} !important;
     }}
-    button[kind="primary"] {{
+    button[kind="primary"], button[data-testid="stBaseButton-primary"] {{
         background: {t['accent']} !important;
         border-color: {t['accent']} !important;
         color: white !important;
-    }}
-
-    .stTabs [data-baseweb="tab-list"] {{
-        gap: 4px;
-        padding: 4px;
-        background: #121721 !important;
-        border-radius: 12px;
-        border: 1px solid #232d3f !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    }}
-    .stTabs [data-baseweb="tab"] {{
-        border-radius: 8px;
-        padding: 8px 14px;
-        font-size: 0.82rem !important;
-        font-weight: 650;
-        color: #a0aec0 !important;
-        background: transparent !important;
-        border: 1px solid transparent !important;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    }}
-    .stTabs [data-baseweb="tab"]:hover {{
-        background: rgba(255, 255, 255, 0.05) !important;
-        color: #edf2f7 !important;
-        border-color: rgba(255, 255, 255, 0.1) !important;
-    }}
-    .stTabs [aria-selected="true"] {{
-        background: #1a202c !important;
-        color: #ffffff !important;
-        border: 1px solid #38bdf8 !important;
-        box-shadow: 0 4px 14px rgba(56, 189, 248, 0.2) !important;
     }}
 
     div[data-testid="stFileUploader"] {{
@@ -302,14 +417,6 @@ def _build_css(t: dict[str, str]) -> str:
     }}
 
     .stDataFrame {{ border-radius: 10px; overflow: hidden; border: 1px solid {t['border']}; }}
-
-    section[data-testid="stSidebar"] {{
-        background: {t['bg-app']} !important;
-        border-right: 1px solid {t['border-strong']} !important;
-        padding-top: 1rem !important;
-    }}
-    section[data-testid="stSidebar"] * {{ color: {t['text-primary']} !important; }}
-    section[data-testid="stSidebar"] hr {{ border-color: rgba(255,255,255,0.08) !important; margin: 10px 0 !important; }}
 
     /* EXPANDER & SELECTBOX DARK OVERRIDES */
     div[data-testid="stExpander"] {{

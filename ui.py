@@ -46,40 +46,28 @@ def show_ml_readiness(ml_score, ml_status):
 
 
 def show_quality_findings(quality_findings):
+    from components import cards
     st.subheader("Quality Findings")
 
     if not quality_findings:
         st.success("No major quality issues detected.")
         return
 
-    for finding in quality_findings:
-        severity = finding.get(
-            "Severity",
-            "Medium"
-        )
-
-        issue = finding.get(
-            "Issue",
-            "Unknown Issue"
-        )
-
-        details = finding.get(
-            "Details",
-            ""
-        )
-
-        if severity == "High":
-            st.error(
-                f"🔴 **{issue}** — {details}"
-            )
-        elif severity == "Medium":
-            st.warning(
-                f"🟡 **{issue}** — {details}"
-            )
-        else:
-            st.info(
-                f"🔵 **{issue}** — {details}"
-            )
+    if isinstance(quality_findings, list):
+        for finding in quality_findings:
+            if isinstance(finding, dict):
+                severity = finding.get("Severity", "Medium")
+                issue = finding.get("Issue", finding.get("finding", "Quality Issue"))
+                details = finding.get("Details", "")
+                kind = "danger" if severity == "High" else ("warning" if severity == "Medium" else "info")
+                cards.finding_card(issue, f"<strong>Severity:</strong> {severity}<br>{details}", kind)
+            else:
+                cards.finding_card("Finding", str(finding), "info")
+    elif isinstance(quality_findings, dict):
+        for issue, details in quality_findings.items():
+            cards.finding_card(issue, str(details), "info")
+    else:
+        st.write(str(quality_findings))
 
 
 def show_agent_decisions(decisions):
@@ -179,39 +167,50 @@ def show_data_preview(df, rows=10):
 
 
 def format_report_headings_for_web(report_text: str) -> str:
-    """Formats Executive AI Report section headings with high-contrast accent blocks in the Streamlit Web UI."""
+    """Formats Executive AI Report section headings with high-contrast accent blocks in the Streamlit Web UI, preventing duplicates and stripping artifacts."""
     if not report_text:
         return ""
 
     target_headings = [
         "Executive Assessment", "Dataset Overview", "Key Findings",
-        "Data Quality Assessment", "Statistical Insights", "Visualization Insights",
-        "Machine Learning Readiness", "Dataset Changes", "Impact Assessment",
-        "Limitations", "Recommendations", "Next Best Actions", "AI Status",
+        "Data Quality Assessment", "Data Quality", "Statistical Insights", "Visualization Insights",
+        "Machine Learning Readiness", "ML Readiness", "Dataset Changes", "Impact Assessment",
+        "Opportunities", "Limitations", "Recommendations", "Recommended Action", "Recommended Actions",
+        "Final Verdict", "Final Recommendation", "Next Best Actions", "AI Status",
     ]
 
     lines = report_text.splitlines()
     formatted_lines = []
+    seen_headings = set()
 
     for line in lines:
-        stripped = line.lstrip("#").strip()
+        # Strip [svg] and anchor fragments
+        clean_line = line.split("[svg]")[0].split("http://localhost")[0].strip()
+        if not clean_line:
+            continue
+
+        stripped = clean_line.lstrip("#").strip()
         matched = None
         for th in target_headings:
             if th.lower() in stripped.lower():
                 matched = th
                 break
 
-        if matched and (line.startswith("#") or line.isupper() or len(stripped) < 40):
+        if matched and (clean_line.startswith("#") or clean_line.isupper() or len(stripped) < 40):
+            heading_key = matched.upper()
+            if heading_key in seen_headings:
+                continue  # Skip duplicate headings
+            seen_headings.add(heading_key)
             block = f"""
 <div style="background: linear-gradient(90deg, rgba(99, 102, 241, 0.18), rgba(18, 23, 33, 0.95)); border-left: 4px solid #6366f1; border-radius: 6px; padding: 8px 14px; margin-top: 18px; margin-bottom: 10px;">
-    <div style="font-size: 1.02rem; font-weight: 800; color: #edf2f7; letter-spacing: -0.01em; text-transform: uppercase;">
-        📌 {matched.upper()}
+    <div style="font-size: 1.15rem; font-weight: 800; color: #edf2f7; letter-spacing: 0.02em; text-transform: uppercase;">
+        📌 {heading_key}
     </div>
 </div>
 """
             formatted_lines.append(block)
         else:
-            formatted_lines.append(line)
+            formatted_lines.append(clean_line)
 
     return "\n".join(formatted_lines)
 

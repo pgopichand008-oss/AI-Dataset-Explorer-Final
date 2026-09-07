@@ -82,19 +82,41 @@ def render_sidebar():
 
         st.divider()
 
+        # Check if dataset is already uploaded
+        current_file_session = st.session_state.get("current_dataset")
+        has_file = current_file_session is not None or (state.get("loaded_file_name") or "") != ""
+
         # ----------------------------------------------------
         # DISTINCTIVE DATA INPUT UPLOAD PANEL
         # ----------------------------------------------------
-        st.markdown(
-            """
-            <div class="data-input-panel">
-                <div class="data-input-header">
-                    📥 DATA INPUT PANEL
+        if not has_file:
+            st.markdown(
+                """
+                <div class="data-input-panel-highlighted">
+                    <div style="font-size: 0.72rem; font-weight: 800; text-transform: uppercase; color: #38bdf8; letter-spacing: 0.06em; margin-bottom: 4px;">
+                        👇 START HERE — UPLOAD YOUR DATASET
+                    </div>
+                    <div class="data-input-header" style="font-size: 0.85rem; font-weight: 800; color: #ffffff; margin-bottom: 4px;">
+                        📥 DATA INPUT PANEL
+                    </div>
+                    <div style="font-size: 0.76rem; color: #a0aec0;">
+                        Upload a CSV or Excel file to begin analysis.
+                    </div>
                 </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                """
+                <div class="data-input-panel">
+                    <div class="data-input-header">
+                        📥 DATA INPUT PANEL
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
         current_file = st.file_uploader(
             "Upload Active Dataset (CSV / Excel)",
@@ -128,13 +150,13 @@ def render_sidebar():
         )
 
         previous_file = st.file_uploader(
-            "Previous Version (V1)",
+            "Previous Version (V1) — Upload previous version",
             type=["csv", "xlsx"],
             key="previous_dataset",
         )
 
         updated_file = st.file_uploader(
-            "Updated Version (V2)",
+            "Updated Version (V2) — Upload updated version",
             type=["csv", "xlsx"],
             key="updated_dataset",
         )

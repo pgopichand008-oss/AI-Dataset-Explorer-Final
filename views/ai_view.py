@@ -127,7 +127,7 @@ def render(
     # --------------------------------------------------------
     st.markdown("### 📄 Full Executive Briefing")
 
-    if st.button("Generate Complete Executive Briefing", type="primary", key="generate_ai_report_main"):
+    if st.button("✨ Generate Complete Executive Briefing", icon="✨", type="primary", key="generate_ai_report_main"):
         with st.spinner("AI Agent is compiling full executive briefing..."):
             profile_data = {
                 "dataset": uploaded_file.name if uploaded_file else "Data",
