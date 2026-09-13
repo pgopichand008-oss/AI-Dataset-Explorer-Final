@@ -572,6 +572,55 @@ class TestAIDatasetIntelligence(unittest.TestCase):
         self.assertEqual(_resolve_verdict(30, "NOT SUITABLE"), "NOT SUITABLE WITHOUT ADDITIONAL CORRECTION")
         print("[PASS] TEST 50: Exact Final Recommendation statuses verified")
 
+    def test_51_generalized_data_dictionary(self):
+        """TEST 51: Generalized AI Data Dictionary verification on synthetic dataset."""
+        from engine.dictionary_engine import build_data_dictionary
+        syn_df = pd.DataFrame({
+            "user_code": ["USR001", "USR002", "USR003", "USR004", "USR005"],
+            "given_name": ["Alice", "Bob", "Charlie", "David", "Eve"],
+            "category": ["A", "B", "A", "C", "B"],
+            "amount": [10.5, 20.0, 15.75, 8.0, 12.5],
+            "created_at": ["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04", "2025-01-05"],
+            "email_address": ["a@example.com", "b@example.com", "c@example.com", "d@example.com", "e@example.com"],
+        })
+        syn_df_copy = syn_df.copy()
+
+        dd = build_data_dictionary(syn_df)
+
+        # 1. Immutability check: syn_df was not modified
+        pd.testing.assert_frame_equal(syn_df, syn_df_copy)
+
+        # 2. Check structure
+        self.assertIn("columns", dd)
+        cols = dd["columns"]
+        self.assertEqual(len(cols), len(syn_df.columns))
+
+        expected_names = list(syn_df.columns)
+        actual_names = []
+
+        for entry in cols:
+            col_name = entry.get("column") or entry.get("name")
+            self.assertIsNotNone(col_name)
+            self.assertNotEqual(col_name, "Not available")
+            self.assertIn(col_name, expected_names)
+            actual_names.append(col_name)
+
+            det_type = entry.get("type") or entry.get("detected_type")
+            self.assertIsNotNone(det_type)
+            self.assertNotEqual(det_type, "Not available")
+
+            conf = entry.get("confidence")
+            self.assertIsNotNone(conf)
+
+            self.assertIn("semantic_role", entry)
+            self.assertIn("possible_meaning", entry)
+            self.assertIn("quality_concerns", entry)
+            self.assertIn("analytical_usefulness", entry)
+            self.assertIn("ml_usefulness", entry)
+
+        self.assertEqual(set(actual_names), set(expected_names))
+        print("[PASS] TEST 51: Generalized AI Data Dictionary verified with synthetic columns")
+
 
 
 

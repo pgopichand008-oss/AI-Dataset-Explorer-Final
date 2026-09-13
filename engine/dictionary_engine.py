@@ -1,747 +1,1361 @@
 """
-FILE: engine/dictionary_engine.py
+General-purpose AI Data Dictionary Engine.
 
-AI Data Dictionary / Column Intelligence Backend.
+Responsibilities
+----------------
+- Infer column data types from values rather than relying only on pandas dtype.
+- Infer semantic roles such as identifier, categorical feature, numerical measure,
+  datetime, text, and target candidate.
+- Detect common missing-value placeholders.
+- Detect mixed/invalid values without modifying the original dataframe.
+- Estimate confidence in every inference.
+- Provide analytical and ML usefulness guidance.
+- Return JSON-serializable output.
 
-Responsibilities:
-- Transform raw column information or Evidence Layer output into structured,
-  factual, explainable column-level intelligence.
-- Deterministic column type classification (numerical, categorical, datetime,
-  boolean, text, unknown).
-- Semantic role assignment (identifier, target candidate, numerical measure,
-  categorical feature, datetime, text, constant, all missing, high cardinality, unknown).
-- Factual missingness, uniqueness, and type-specific descriptive statistics.
-- Cautious, evidence-grounded interpretations without fabricated business semantics.
-- Detection of factual quality concerns (missingness, constant, outliers, high cardinality).
-- Factual analytical and ML usefulness guidance.
-- JSON serializability and strict DataFrame immutability.
+Design principles
+-----------------
+1. Never mutate the input dataframe.
+2. Never hard-code one dataset's column names.
+3. Prefer evidence from actual values over column-name guesses.
+4. Use conservative semantic inference when evidence is weak.
+5. Preserve compatibility with build_data_dictionary(df).
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-import math
-from typing import Any, Dict, List, Optional, Tuple, Union
+import re
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
-from engine.evidence import build_evidence
-from utils import safe_percentage, infer_column_role
+
+# ---------------------------------------------------------------------
+# Generic helpers
+# ---------------------------------------------------------------------
+
+MISSING_LIKE_VALUES = {
+    "",
+    " ",
+    "na",
+    "n/a",
+    "nan",
+    "none",
+    "null",
+    "nil",
+    "missing",
+    "unknown",
+    "not available",
+    "not applicable",
+    "not_applicable",
+    "-",
+    "--",
+    "?",
+}
 
 
-# ============================================================
-# JSON SERIALIZATION HELPER
-# ============================================================
+def _to_serializable(value: Any) -> Any:
+    """Convert numpy/pandas values into JSON-safe Python values."""
 
-def _to_serializable(val: Any) -> Any:
-    """
-    Recursively sanitize values to ensure complete JSON serializability.
-    Converts NumPy / Pandas scalars, NaNs, Infs, and Timestamps to native Python.
-    """
-    if val is None:
+    if value is None:
         return None
 
-    if isinstance(val, (bool, np.bool_)):
-        return bool(val)
+    if isinstance(value, (np.integer,)):
+        return int(value)
 
-    if isinstance(val, (int, np.integer)):
-        return int(val)
-
-    if isinstance(val, (float, np.floating)):
-        if math.isnan(val) or np.isnan(val) or math.isinf(val) or np.isinf(val):
+    if isinstance(value, (np.floating,)):
+        if np.isnan(value):
             return None
-        return round(float(val), 4)
+        return float(value)
 
-    if isinstance(val, (pd.Timestamp, datetime)):
-        return val.isoformat()
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
 
-    if isinstance(val, dict):
-        return {str(k): _to_serializable(v) for k, v in val.items()}
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
 
-    if isinstance(val, (list, tuple, set)):
-        return [_to_serializable(v) for v in val]
-
-    if isinstance(val, pd.Series):
-        return [_to_serializable(v) for v in val.tolist()]
-
-    if isinstance(val, pd.DataFrame):
-        return [_to_serializable(v) for v in val.to_dict(orient="records")]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
 
     try:
-        if pd.isna(val):
+        if pd.isna(value):
             return None
     except Exception:
         pass
 
-    return str(val)
+    return value
 
 
-# ============================================================
-# COLUMN TYPE DETECTION
-# ============================================================
+def _normalize_column_name(name: Any) -> str:
+    """
+    Normalize a column name for semantic analysis.
+
+    This is intentionally generic. It does not identify one particular
+    dataset; it recognizes broad concepts such as id, name, phone, etc.
+    """
+
+    text = str(name).strip().lower()
+
+    text = re.sub(r"[_\-/]+", " ", text)
+    text = re.sub(r"[^a-z0-9\s$%]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
+
+
+def _is_missing_like(value: Any) -> bool:
+    """Detect explicit missing values and common textual placeholders."""
+
+    if value is None:
+        return True
+
+    try:
+        if pd.isna(value):
+            return True
+    except Exception:
+        pass
+
+    text = str(value).strip().lower()
+
+    return text in MISSING_LIKE_VALUES
+
+
+def _get_non_missing_values(series: pd.Series) -> pd.Series:
+    """Return values that are not missing or missing-like."""
+
+    if series.empty:
+        return series
+
+    mask = ~series.map(_is_missing_like)
+    return series.loc[mask]
+
+
+# ---------------------------------------------------------------------
+# Value-pattern analysis
+# ---------------------------------------------------------------------
+
+def _numeric_conversion_ratio(series: pd.Series) -> float:
+    """Percentage of non-missing values that can reasonably become numeric."""
+
+    values = _get_non_missing_values(series)
+
+    if values.empty:
+        return 0.0
+
+    if pd.api.types.is_numeric_dtype(values):
+        return 1.0
+
+    converted = pd.to_numeric(
+        values.astype(str).str.replace(",", "", regex=False).str.strip(),
+        errors="coerce",
+    )
+
+    return float(converted.notna().mean())
+
+
+def _datetime_conversion_ratio(series: pd.Series) -> float:
+    """
+    Estimate whether values represent dates.
+
+    Uses conservative parsing to avoid interpreting arbitrary numbers or
+    short categorical strings as dates.
+    """
+
+    values = _get_non_missing_values(series)
+
+    if values.empty:
+        return 0.0
+
+    if pd.api.types.is_datetime64_any_dtype(values):
+        return 1.0
+
+    # Existing numeric columns should not automatically become dates.
+    if pd.api.types.is_numeric_dtype(values):
+        return 0.0
+
+    text_values = values.astype(str).str.strip()
+
+    # Require some visible date/time structure.
+    date_pattern = text_values.str.contains(
+        r"[-/:]|[A-Za-z]{3,}",
+        regex=True,
+        na=False,
+    )
+
+    if date_pattern.mean() < 0.50:
+        return 0.0
+
+    parsed = pd.to_datetime(
+        text_values,
+        errors="coerce",
+        format="mixed",
+    )
+
+    return float(parsed.notna().mean())
+
+
+def _boolean_conversion_ratio(series: pd.Series) -> float:
+    """Detect common boolean representations."""
+
+    values = _get_non_missing_values(series)
+
+    if values.empty:
+        return 0.0
+
+    if pd.api.types.is_bool_dtype(values):
+        return 1.0
+
+    normalized = (
+        values.astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    boolean_values = {
+        "true",
+        "false",
+        "yes",
+        "no",
+        "y",
+        "n",
+        "t",
+        "f",
+        "1",
+        "0",
+    }
+
+    return float(normalized.isin(boolean_values).mean())
+
+
+def _identifier_pattern_ratio(series: pd.Series) -> float:
+    """
+    Detect identifier-like value patterns.
+
+    Examples of generic patterns:
+    - EMP001
+    - ABC-12345
+    - UUID-like values
+    - account/reference numbers
+    - long digit strings
+    """
+
+    values = _get_non_missing_values(series)
+
+    if values.empty:
+        return 0.0
+
+    text_values = values.astype(str).str.strip()
+
+    patterns = [
+        # UUID-like
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+
+        # Prefix + number, e.g. ABC123 / EMP-1001
+        r"^[A-Za-z]{2,8}[-_]?\d{2,}$",
+
+        # Long numeric identifiers
+        r"^\d{6,}$",
+
+        # Alphanumeric reference codes
+        r"^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]{6,}$",
+    ]
+
+    matched = pd.Series(False, index=text_values.index)
+
+    for pattern in patterns:
+        matched |= text_values.str.match(
+            pattern,
+            case=False,
+            na=False,
+        )
+
+    return float(matched.mean())
+
+
+def _text_characteristics(series: pd.Series) -> Dict[str, Any]:
+    """Calculate generic text characteristics."""
+
+    values = _get_non_missing_values(series)
+
+    if values.empty:
+        return {
+            "avg_length": 0.0,
+            "max_length": 0,
+            "space_ratio": 0.0,
+            "alphabetic_ratio": 0.0,
+            "email_ratio": 0.0,
+            "phone_ratio": 0.0,
+        }
+
+    text = values.astype(str).str.strip()
+
+    lengths = text.str.len()
+
+    avg_length = float(lengths.mean())
+    max_length = int(lengths.max())
+
+    space_ratio = float(text.str.contains(r"\s", regex=True).mean())
+
+    alphabetic_ratio = float(
+        text.str.contains(r"[A-Za-z]", regex=True).mean()
+    )
+
+    email_ratio = float(
+        text.str.match(
+            r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+            na=False,
+        ).mean()
+    )
+
+    phone_ratio = float(
+        text.str.match(
+            r"^\+?[\d\s().-]{7,}$",
+            na=False,
+        ).mean()
+    )
+
+    return {
+        "avg_length": avg_length,
+        "max_length": max_length,
+        "space_ratio": space_ratio,
+        "alphabetic_ratio": alphabetic_ratio,
+        "email_ratio": email_ratio,
+        "phone_ratio": phone_ratio,
+    }
+
+
+# ---------------------------------------------------------------------
+# Semantic column-name signals
+# ---------------------------------------------------------------------
+
+def _name_signal(column_name: str, groups: Dict[str, List[str]]) -> float:
+    """
+    Calculate a generic name-based signal.
+
+    Exact token/phrase matches receive stronger evidence than loose
+    substring matches.
+    """
+
+    normalized = _normalize_column_name(column_name)
+    tokens = set(normalized.split())
+
+    best_score = 0.0
+
+    for terms in groups.values():
+        for term in terms:
+            term_norm = _normalize_column_name(term)
+
+            if not term_norm:
+                continue
+
+            term_tokens = set(term_norm.split())
+
+            if term_norm == normalized:
+                best_score = max(best_score, 1.0)
+
+            elif term_tokens and term_tokens.issubset(tokens):
+                best_score = max(best_score, 0.95)
+
+            elif term_norm in normalized:
+                best_score = max(best_score, 0.75)
+
+    return best_score
+
+
+IDENTIFIER_NAME_GROUPS = {
+    "identifier": [
+        "id",
+        "identifier",
+        "reference",
+        "ref",
+        "code",
+        "key",
+        "record number",
+        "record no",
+        "number",
+        "account number",
+        "account no",
+        "customer number",
+        "customer no",
+        "employee number",
+        "employee no",
+        "user id",
+        "user number",
+        "transaction id",
+        "transaction number",
+    ]
+}
+
+
+NAME_FIELD_GROUPS = {
+    "name": [
+        "name",
+        "first name",
+        "last name",
+        "middle name",
+        "full name",
+        "given name",
+        "surname",
+        "family name",
+        "display name",
+    ]
+}
+
+
+CONTACT_GROUPS = {
+    "email": [
+        "email",
+        "email address",
+        "mail",
+        "e mail",
+    ],
+    "phone": [
+        "phone",
+        "phone number",
+        "mobile",
+        "mobile number",
+        "telephone",
+        "telephone number",
+        "contact number",
+    ],
+}
+
+
+CATEGORY_NAME_GROUPS = {
+    "category": [
+        "category",
+        "type",
+        "class",
+        "classification",
+        "group",
+        "department",
+        "division",
+        "team",
+        "region",
+        "location",
+        "country",
+        "state",
+        "city",
+        "status",
+        "gender",
+        "role",
+        "level",
+        "segment",
+        "category",
+    ]
+}
+
+
+TARGET_NAME_GROUPS = {
+    "target": [
+        "target",
+        "label",
+        "outcome",
+        "response",
+        "prediction",
+        "predicted",
+        "score",
+        "result",
+        "dependent variable",
+    ]
+}
+
+
+# ---------------------------------------------------------------------
+# Column type detection
+# ---------------------------------------------------------------------
 
 def _detect_column_type(
-    col_name: str,
-    col_info: Dict[str, Any],
-    df: Optional[pd.DataFrame] = None,
-) -> Tuple[str, float]:
+    series: pd.Series,
+    column_name: str,
+) -> Dict[str, Any]:
     """
-    Deterministically classify the column type.
-    Supported types: 'numerical', 'categorical', 'datetime', 'boolean', 'text', 'unsupported', 'unknown'.
-    Returns (detected_type, confidence).
+    Infer the most appropriate data type.
+
+    Returns:
+        {
+            "type": ...,
+            "confidence": ...,
+            "evidence": {...}
+        }
     """
-    data_type_str = str(col_info.get("data_type", "")).lower()
-    inferred_role = str(col_info.get("inferred_role", ""))
-    samples = col_info.get("sample_values", [])
 
-    # 1. Check native DataFrame dtype if available
-    if df is not None and col_name in df.columns:
-        series = df[col_name]
-        if pd.api.types.is_complex_dtype(series):
-            return "unsupported", 0.40
-        if pd.api.types.is_bool_dtype(series):
-            return "boolean", 0.95
-        if pd.api.types.is_datetime64_any_dtype(series):
-            return "datetime", 0.95
-        if pd.api.types.is_numeric_dtype(series):
-            return "numerical", 0.95
-        if pd.api.types.is_string_dtype(series):
-            str_samples = [str(s) for s in series.dropna().head(100).tolist()]
-            if str_samples:
-                avg_len = sum(len(s) for s in str_samples) / len(str_samples)
-                has_spaces = any(" " in s for s in str_samples)
-                if avg_len >= 50 or (avg_len >= 25 and has_spaces):
-                    return "text", 0.85
-            return "categorical", 0.90
+    values = _get_non_missing_values(series)
 
-    # 2. Check inferred role or string representation of dtype
-    if "complex" in data_type_str or "period" in data_type_str:
-        return "unsupported", 0.40
+    total_count = len(series)
+    non_missing_count = len(values)
 
-    if "bool" in data_type_str:
-        return "boolean", 0.95
+    if non_missing_count == 0:
+        return {
+            "type": "all missing",
+            "confidence": 100,
+            "evidence": {
+                "non_missing_count": 0,
+                "missing_count": total_count,
+            },
+        }
 
-    if "datetime" in data_type_str or inferred_role == "Date / Time":
-        return "datetime", 0.95
+    missing_count = total_count - non_missing_count
 
-    if any(num_t in data_type_str for num_t in ("int", "float", "double")):
-        return "numerical", 0.95
+    numeric_ratio = _numeric_conversion_ratio(series)
+    datetime_ratio = _datetime_conversion_ratio(series)
+    boolean_ratio = _boolean_conversion_ratio(series)
+    identifier_ratio = _identifier_pattern_ratio(series)
+    text_info = _text_characteristics(series)
 
-    # 3. Object / String / Categorical analysis
-    if any(cat_t in data_type_str for cat_t in ("object", "string", "category")):
-        # Check if sample strings are long text
-        str_samples = [str(s) for s in samples if s is not None]
-        if str_samples:
-            avg_len = sum(len(s) for s in str_samples) / len(str_samples)
-            has_spaces = any(" " in s for s in str_samples)
-            if avg_len >= 50 or (avg_len >= 25 and has_spaces):
-                return "text", 0.85
+    unique_count = int(values.astype(str).nunique())
+    cardinality_ratio = unique_count / max(non_missing_count, 1)
 
-        return "categorical", 0.90
+    normalized_name = _normalize_column_name(column_name)
 
-    # Fallback
-    return "unknown", 0.50
+    identifier_name_score = _name_signal(
+        normalized_name,
+        IDENTIFIER_NAME_GROUPS,
+    )
+
+    name_field_score = _name_signal(
+        normalized_name,
+        NAME_FIELD_GROUPS,
+    )
+
+    contact_score = _name_signal(
+        normalized_name,
+        CONTACT_GROUPS,
+    )
+
+    category_name_score = _name_signal(
+        normalized_name,
+        CATEGORY_NAME_GROUPS,
+    )
+
+    # -------------------------------------------------------------
+    # Existing pandas dtypes
+    # -------------------------------------------------------------
+
+    if pd.api.types.is_bool_dtype(series):
+        return {
+            "type": "boolean",
+            "confidence": 98,
+            "evidence": {
+                "boolean_ratio": 1.0,
+                "pandas_dtype": str(series.dtype),
+            },
+        }
+
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return {
+            "type": "datetime",
+            "confidence": 99,
+            "evidence": {
+                "datetime_ratio": 1.0,
+                "pandas_dtype": str(series.dtype),
+            },
+        }
+
+    if pd.api.types.is_numeric_dtype(series):
+        return {
+            "type": "numerical",
+            "confidence": 96,
+            "evidence": {
+                "numeric_ratio": 1.0,
+                "pandas_dtype": str(series.dtype),
+                "unique_count": unique_count,
+            },
+        }
+
+    # -------------------------------------------------------------
+    # Strong content-based semantic patterns
+    # -------------------------------------------------------------
+
+    if text_info["email_ratio"] >= 0.80:
+        return {
+            "type": "text",
+            "confidence": 96,
+            "evidence": {
+                "email_ratio": text_info["email_ratio"],
+                "contact_signal": contact_score,
+            },
+        }
+
+    if (
+        text_info["phone_ratio"] >= 0.80
+        and contact_score >= 0.50
+    ):
+        return {
+            "type": "identifier",
+            "confidence": 94,
+            "evidence": {
+                "phone_ratio": text_info["phone_ratio"],
+                "contact_signal": contact_score,
+            },
+        }
+
+    # -------------------------------------------------------------
+    # Identifier detection
+    # -------------------------------------------------------------
+
+    identifier_score = max(
+        identifier_name_score,
+        identifier_ratio,
+    )
+
+    if identifier_score >= 0.90 and cardinality_ratio >= 0.70:
+        return {
+            "type": "identifier",
+            "confidence": 95,
+            "evidence": {
+                "identifier_name_score": identifier_name_score,
+                "identifier_pattern_ratio": identifier_ratio,
+                "uniqueness_ratio": cardinality_ratio,
+            },
+        }
+
+    # High uniqueness + identifier pattern can also indicate IDs.
+    if (
+        identifier_ratio >= 0.80
+        and cardinality_ratio >= 0.90
+    ):
+        return {
+            "type": "identifier",
+            "confidence": 92,
+            "evidence": {
+                "identifier_pattern_ratio": identifier_ratio,
+                "uniqueness_ratio": cardinality_ratio,
+            },
+        }
+
+    # -------------------------------------------------------------
+    # Datetime detection
+    # -------------------------------------------------------------
+
+    if datetime_ratio >= 0.85:
+        return {
+            "type": "datetime",
+            "confidence": 96,
+            "evidence": {
+                "datetime_ratio": datetime_ratio,
+            },
+        }
+
+    # -------------------------------------------------------------
+    # Boolean detection
+    # -------------------------------------------------------------
+
+    if boolean_ratio >= 0.90:
+        return {
+            "type": "boolean",
+            "confidence": 95,
+            "evidence": {
+                "boolean_ratio": boolean_ratio,
+            },
+        }
+
+    # -------------------------------------------------------------
+    # Numeric-like columns with a few invalid values
+    # -------------------------------------------------------------
+
+    if numeric_ratio >= 0.80:
+        confidence = 96 if numeric_ratio >= 0.95 else 90
+
+        return {
+            "type": "numerical",
+            "confidence": confidence,
+            "evidence": {
+                "numeric_conversion_ratio": numeric_ratio,
+                "invalid_ratio": 1.0 - numeric_ratio,
+            },
+        }
+
+    # -------------------------------------------------------------
+    # Names and human-readable fields
+    # -------------------------------------------------------------
+
+    if name_field_score >= 0.75:
+        return {
+            "type": "text",
+            "confidence": 94,
+            "evidence": {
+                "name_field_score": name_field_score,
+                "average_length": text_info["avg_length"],
+                "space_ratio": text_info["space_ratio"],
+            },
+        }
+
+    # Text columns with mostly alphabetic values and moderate
+    # cardinality are usually names, descriptions, labels, etc.
+    if (
+        text_info["alphabetic_ratio"] >= 0.80
+        and text_info["avg_length"] >= 2
+        and text_info["avg_length"] <= 80
+    ):
+        # Low cardinality is more likely categorical.
+        if cardinality_ratio <= 0.35 and unique_count <= 30:
+            return {
+                "type": "categorical",
+                "confidence": 90,
+                "evidence": {
+                    "alphabetic_ratio": text_info["alphabetic_ratio"],
+                    "uniqueness_ratio": cardinality_ratio,
+                    "unique_count": unique_count,
+                },
+            }
+
+        return {
+            "type": "text",
+            "confidence": 88,
+            "evidence": {
+                "alphabetic_ratio": text_info["alphabetic_ratio"],
+                "average_length": text_info["avg_length"],
+                "uniqueness_ratio": cardinality_ratio,
+            },
+        }
+
+    # -------------------------------------------------------------
+    # Explicit category signals
+    # -------------------------------------------------------------
+
+    if category_name_score >= 0.70:
+        return {
+            "type": "categorical",
+            "confidence": 91,
+            "evidence": {
+                "category_name_score": category_name_score,
+                "unique_count": unique_count,
+                "uniqueness_ratio": cardinality_ratio,
+            },
+        }
+
+    # -------------------------------------------------------------
+    # Low-cardinality fallback
+    # -------------------------------------------------------------
+
+    if unique_count <= 20 and cardinality_ratio <= 0.50:
+        return {
+            "type": "categorical",
+            "confidence": 84,
+            "evidence": {
+                "unique_count": unique_count,
+                "uniqueness_ratio": cardinality_ratio,
+            },
+        }
+
+    # -------------------------------------------------------------
+    # Long / variable text fallback
+    # -------------------------------------------------------------
+
+    if (
+        text_info["avg_length"] >= 50
+        or (
+            text_info["avg_length"] >= 25
+            and text_info["space_ratio"] >= 0.30
+        )
+    ):
+        return {
+            "type": "text",
+            "confidence": 85,
+            "evidence": {
+                "average_length": text_info["avg_length"],
+                "maximum_length": text_info["max_length"],
+                "space_ratio": text_info["space_ratio"],
+            },
+        }
+
+    # -------------------------------------------------------------
+    # Generic object/string fallback
+    # -------------------------------------------------------------
+
+    if pd.api.types.is_string_dtype(series):
+        return {
+            "type": "text",
+            "confidence": 75,
+            "evidence": {
+                "pandas_dtype": str(series.dtype),
+                "unique_count": unique_count,
+                "uniqueness_ratio": cardinality_ratio,
+            },
+        }
+
+    return {
+        "type": "unknown",
+        "confidence": 50,
+        "evidence": {
+            "pandas_dtype": str(series.dtype),
+            "unique_count": unique_count,
+            "uniqueness_ratio": cardinality_ratio,
+        },
+    }
 
 
-# ============================================================
-# SEMANTIC ROLE ASSIGNMENT
-# ============================================================
+# ---------------------------------------------------------------------
+# Semantic role detection
+# ---------------------------------------------------------------------
 
 def _determine_semantic_role(
-    col_name: str,
+    series: pd.Series,
+    column_name: str,
     detected_type: str,
-    col_info: Dict[str, Any],
-    row_count: int,
-) -> Tuple[str, float]:
-    """
-    Deterministically assign a semantic role based on factual evidence.
-    Roles:
-    - 'all missing'
-    - 'constant'
-    - 'identifier'
-    - 'target candidate'
-    - 'datetime'
-    - 'numerical measure'
-    - 'text'
-    - 'high cardinality'
-    - 'categorical feature'
-    - 'unknown'
-    """
-    is_all_missing = col_info.get("is_all_missing", False)
-    is_constant = col_info.get("is_constant", False)
-    missing_count = col_info.get("missing_count", 0)
-    missing_pct = col_info.get("missing_percentage", 0.0)
-    unique_count = col_info.get("unique_count", 0)
-    unique_pct = col_info.get("unique_percentage", 0.0)
-    is_target_cand = col_info.get("is_target_candidate", False)
-    is_potential_id = col_info.get("is_potential_identifier", False)
-    inferred_role = str(col_info.get("inferred_role", ""))
+) -> str:
+    """Determine the most useful analytical role."""
 
-    col_lower = str(col_name).lower()
-    target_keywords = {"target", "label", "outcome", "class", "churn", "default", "result", "y"}
+    normalized_name = _normalize_column_name(column_name)
 
-    # 1. All missing
-    if is_all_missing or (row_count > 0 and missing_count == row_count) or missing_pct >= 100.0:
-        return "all missing", 0.99
+    values = _get_non_missing_values(series)
 
-    # 2. Constant
-    if is_constant or (row_count > 0 and unique_count <= 1 and missing_count == 0):
-        return "constant", 0.98
+    if values.empty:
+        return "unknown"
 
-    # 3. Identifier
-    if is_potential_id or inferred_role == "Identifier" or (unique_pct >= 95.0 and unique_count > 10 and row_count > 10):
-        return "identifier", 0.92
+    unique_count = int(values.astype(str).nunique())
+    non_missing_count = len(values)
 
-    # 4. Target candidate by name / explicit flag
-    if col_lower in target_keywords or (is_target_cand and any(kw in col_lower for kw in ("target", "label", "class", "churn"))):
-        return "target candidate", 0.90
+    uniqueness_ratio = unique_count / max(non_missing_count, 1)
 
-    # 5. Datetime
-    if detected_type == "datetime" or inferred_role == "Date / Time":
-        return "datetime", 0.95
+    identifier_name_score = _name_signal(
+        normalized_name,
+        IDENTIFIER_NAME_GROUPS,
+    )
 
-    # 6. Numerical measure
+    name_field_score = _name_signal(
+        normalized_name,
+        NAME_FIELD_GROUPS,
+    )
+
+    category_name_score = _name_signal(
+        normalized_name,
+        CATEGORY_NAME_GROUPS,
+    )
+
+    target_name_score = _name_signal(
+        normalized_name,
+        TARGET_NAME_GROUPS,
+    )
+
+    text_info = _text_characteristics(series)
+
+    # -------------------------------------------------------------
+    # Identifier
+    # -------------------------------------------------------------
+
+    if detected_type == "identifier":
+        return "identifier"
+
+    if (
+        identifier_name_score >= 0.90
+        and uniqueness_ratio >= 0.70
+    ):
+        return "identifier"
+
+    # -------------------------------------------------------------
+    # Name/contact fields are descriptive text, not identifiers
+    # -------------------------------------------------------------
+
+    if name_field_score >= 0.75:
+        return "text"
+
+    if (
+        text_info["email_ratio"] >= 0.80
+        or text_info["phone_ratio"] >= 0.80
+    ):
+        return "contact information"
+
+    # -------------------------------------------------------------
+    # Target candidate
+    # -------------------------------------------------------------
+
+    if target_name_score >= 0.85:
+        return "target candidate"
+
+    # -------------------------------------------------------------
+    # Datetime
+    # -------------------------------------------------------------
+
+    if detected_type == "datetime":
+        return "datetime"
+
+    # -------------------------------------------------------------
+    # Numerical
+    # -------------------------------------------------------------
+
     if detected_type == "numerical":
-        if is_target_cand and (col_lower in target_keywords or "target" in col_lower):
-            return "target candidate", 0.85
-        return "numerical measure", 0.90
+        return "numerical measure"
 
-    # 7. Text
+    # -------------------------------------------------------------
+    # Boolean
+    # -------------------------------------------------------------
+
+    if detected_type == "boolean":
+        return "categorical feature"
+
+    # -------------------------------------------------------------
+    # Categorical
+    # -------------------------------------------------------------
+
+    if detected_type == "categorical":
+        return "categorical feature"
+
+    # -------------------------------------------------------------
+    # Text
+    # -------------------------------------------------------------
+
     if detected_type == "text":
-        return "text", 0.85
+        return "text"
 
-    # 8. High cardinality categorical
-    if detected_type in ("categorical", "boolean") or inferred_role == "Categorical":
-        if unique_count > 50 and unique_pct > 30.0:
-            return "high cardinality", 0.85
-        return "categorical feature", 0.90
+    # -------------------------------------------------------------
+    # Name-based category signal can rescue ambiguous object fields
+    # -------------------------------------------------------------
 
-    # 9. Target candidate fallback
-    if is_target_cand:
-        return "target candidate", 0.80
+    if category_name_score >= 0.70:
+        return "categorical feature"
 
-    # 10. Unknown
-    return "unknown", 0.50
+    return "unknown"
 
 
-# ============================================================
-# CAUTIOUS INTERPRETATION (POSSIBLE MEANING)
-# ============================================================
+# ---------------------------------------------------------------------
+# Possible meaning
+# ---------------------------------------------------------------------
 
 def _generate_possible_meaning(
-    col_name: str,
+    column_name: str,
     detected_type: str,
     semantic_role: str,
-    col_info: Dict[str, Any],
+    series: pd.Series,
 ) -> str:
-    """
-    Generate cautious, evidence-grounded interpretations.
-    Never invents unverified business semantics like 'Customer age' or 'Sales revenue'.
-    Always begins with 'Possible interpretation: '.
-    """
-    unique_count = col_info.get("unique_count", 0)
-    unique_pct = col_info.get("unique_percentage", 0.0)
+    """Generate a concise, evidence-based interpretation."""
 
-    if semantic_role == "all missing":
-        return "Possible interpretation: unpopulated column containing entirely missing values."
+    values = _get_non_missing_values(series)
 
-    if semantic_role == "constant":
-        return "Possible interpretation: constant column containing a single uniform non-null value across all records."
+    if values.empty:
+        return "Column contains no usable non-missing values."
+
+    unique_count = int(values.astype(str).nunique())
 
     if semantic_role == "identifier":
         return (
-            f"Possible interpretation: identifier-like column based on very high uniqueness ratio "
-            f"({unique_pct:.1f}% unique values)."
-        )
-
-    if semantic_role == "target candidate":
-        return (
-            "Possible interpretation: potential target candidate based on discrete class distribution "
-            "or target suitability characteristics."
+            "Possible interpretation: identifier-like field based on "
+            "uniqueness and/or identifier patterns."
         )
 
     if semantic_role == "datetime":
-        return "Possible interpretation: time-related field because values are detected as dates or timestamps."
-
-    if semantic_role == "text":
-        return "Possible interpretation: unstructured or variable-length text field."
-
-    if semantic_role == "high cardinality":
         return (
-            f"Possible interpretation: high-cardinality categorical feature with "
-            f"{unique_count} distinct discrete levels."
-        )
-
-    if semantic_role == "categorical feature":
-        if detected_type == "boolean":
-            return "Possible interpretation: binary boolean indicator representing two discrete states."
-        return (
-            f"Possible interpretation: categorical feature representing {unique_count} "
-            f"discrete categorical levels."
+            "Possible interpretation: date or time field supported "
+            "by date-like observations."
         )
 
     if semantic_role == "numerical measure":
         return (
-            "Possible interpretation: numerical measure because the column contains "
-            "continuous or discrete quantitative values."
+            "Possible interpretation: quantitative field containing "
+            "numerical observations."
         )
 
-    return "Possible interpretation: unclassified column with ambiguous or mixed data types."
+    if semantic_role == "target candidate":
+        return (
+            "Possible interpretation: potential prediction target "
+            "based on target-oriented naming or evidence."
+        )
+
+    if semantic_role == "categorical feature":
+        return (
+            f"Possible interpretation: categorical field with "
+            f"{unique_count} observed level(s)."
+        )
+
+    if semantic_role == "contact information":
+        return (
+            "Possible interpretation: contact-information field "
+            "such as email or telephone data."
+        )
+
+    if semantic_role == "text":
+        return (
+            "Possible interpretation: free-form or variable-length "
+            "textual field."
+        )
+
+    if detected_type == "boolean":
+        return (
+            "Possible interpretation: binary field representing "
+            "two logical states."
+        )
+
+    return (
+        "Possible interpretation: column type or role could not be "
+        "determined confidently from available evidence."
+    )
 
 
-# ============================================================
-# QUALITY CONCERNS DETECTION
-# ============================================================
+# ---------------------------------------------------------------------
+# Quality concerns
+# ---------------------------------------------------------------------
 
 def _collect_quality_concerns(
-    col_name: str,
+    series: pd.Series,
     detected_type: str,
-    semantic_role: str,
-    col_info: Dict[str, Any],
-    stats: Dict[str, Any],
-    outlier_findings: List[Dict[str, Any]],
-    row_count: int,
 ) -> List[str]:
-    """
-    Deterministically identify factual quality concerns grounded in evidence.
-    """
-    concerns: List[str] = []
-    missing_count = col_info.get("missing_count", 0)
-    missing_pct = col_info.get("missing_percentage", 0.0)
-    unique_count = col_info.get("unique_count", 0)
-    unique_pct = col_info.get("unique_percentage", 0.0)
-    is_constant = col_info.get("is_constant", False)
-    is_all_missing = col_info.get("is_all_missing", False)
-    invalid_info = col_info.get("invalid_values", {})
+    """Return generalized data-quality observations."""
 
-    if row_count == 0:
-        concerns.append("Dataset is empty (0 records); unable to evaluate column distribution.")
+    concerns: List[str] = []
+
+    total = len(series)
+
+    if total == 0:
         return concerns
 
-    if row_count == 1:
-        concerns.append("Single observation dataset; statistical variance cannot be computed.")
+    missing_mask = series.map(_is_missing_like)
+    missing_count = int(missing_mask.sum())
 
-    # 1. Missingness
-    if is_all_missing or missing_pct >= 100.0:
-        concerns.append("All values are missing (100.0% missing cells).")
-    elif missing_pct >= 50.0:
-        concerns.append(f"High missingness: {missing_pct:.1f}% of values are missing ({missing_count:,} cells).")
-    elif missing_pct >= 10.0:
-        concerns.append(f"Moderate missingness: {missing_pct:.1f}% of values are missing ({missing_count:,} cells).")
+    if missing_count > 0:
+        percentage = (missing_count / total) * 100
 
-    # 2. Constant / zero variance
-    if is_constant or (unique_count <= 1 and row_count > 1 and missing_count == 0):
-        concerns.append("Constant column with zero variance across all rows.")
-    elif detected_type == "numerical" and stats.get("std") == 0.0 and row_count > 1:
-        concerns.append("Zero standard deviation; values do not exhibit numerical variation.")
-
-    # 3. High uniqueness / identifier
-    if semantic_role == "identifier" or (unique_pct >= 95.0 and unique_count > 10 and row_count > 10):
         concerns.append(
-            f"Potential identifier with high uniqueness ({unique_pct:.1f}% unique values); "
-            "risk of data leakage if used in ML."
+            f"Contains {missing_count} missing or missing-like value(s) "
+            f"({percentage:.1f}%)."
         )
 
-    # 4. High cardinality categorical
-    if detected_type == "categorical" and unique_count > 50 and unique_pct > 30.0:
-        concerns.append(f"High cardinality: contains {unique_count} distinct categories.")
+    if detected_type == "numerical":
+        numeric_ratio = _numeric_conversion_ratio(series)
 
-    # 5. Invalid / mixed non-numeric values
-    if invalid_info and invalid_info.get("invalid_count", 0) > 0:
-        inv_c = invalid_info["invalid_count"]
-        examples = invalid_info.get("invalid_examples", [])
-        ex_str = f" such as {examples[:3]}" if examples else ""
-        concerns.append(f"Contains {inv_c} invalid or mixed non-numeric value(s){ex_str}.")
+        if numeric_ratio < 1.0:
+            values = _get_non_missing_values(series)
 
-    # 6. Outliers from evidence quality findings or statistical IQR
-    outlier_found = False
-    for of in outlier_findings:
-        attr = of.get("attribute") or of.get("Attribute") or of.get("column")
-        if attr == col_name:
-            c = of.get("count") or of.get("Count") or of.get("anomaly_count", 0)
-            p = of.get("percentage") or of.get("Percentage") or of.get("affected_percentage", 0.0)
-            concerns.append(f"Outliers detected: {c} value(s) ({p:.1f}%) outside 1.5*IQR boundaries.")
-            outlier_found = True
-            break
+            non_numeric = pd.to_numeric(
+                values.astype(str)
+                .str.replace(",", "", regex=False)
+                .str.strip(),
+                errors="coerce",
+            ).isna()
 
-    if not outlier_found and detected_type == "numerical" and row_count >= 4:
-        q25 = stats.get("q25")
-        q75 = stats.get("q75")
-        min_v = stats.get("min")
-        max_v = stats.get("max")
-        if q25 is not None and q75 is not None and min_v is not None and max_v is not None:
-            iqr = q75 - q25
-            if iqr > 0:
-                low_b = q25 - 1.5 * iqr
-                high_b = q75 + 1.5 * iqr
-                if min_v < low_b or max_v > high_b:
-                    concerns.append("Outliers detected: values exist outside 1.5*IQR boundaries.")
+            examples = (
+                values.loc[non_numeric]
+                .astype(str)
+                .head(5)
+                .tolist()
+            )
+
+            invalid_count = int(non_numeric.sum())
+
+            concerns.append(
+                f"Contains {invalid_count} invalid or mixed value(s). "
+                f"Examples: {examples}."
+            )
+
+    if detected_type == "identifier":
+        values = _get_non_missing_values(series)
+
+        if not values.empty:
+            uniqueness = (
+                values.astype(str).nunique()
+                / len(values)
+            )
+
+            if uniqueness >= 0.95:
+                concerns.append(
+                    f"Identifier-like field with "
+                    f"{uniqueness * 100:.1f}% unique values; may cause "
+                    "leakage or memorization if used directly in ML."
+                )
 
     return concerns
 
 
-# ============================================================
-# ANALYTICAL AND ML USEFULNESS GUIDANCE
-# ============================================================
+# ---------------------------------------------------------------------
+# Analytical usefulness
+# ---------------------------------------------------------------------
 
 def _determine_analytical_usefulness(
     detected_type: str,
     semantic_role: str,
-    stats: Dict[str, Any],
-    row_count: int,
 ) -> str:
-    """Provide factual, deterministic analytical usefulness guidance."""
-    if row_count == 0:
-        return "No analytical usefulness available for empty dataset."
-
-    if semantic_role == "all missing":
-        return "Not analytically useful until missing data is collected or imputed."
-
-    if semantic_role == "constant":
-        return "Very low analytical usefulness due to lack of variation across records."
 
     if semantic_role == "identifier":
-        return "Useful for primary key record identification and table joins; limited direct analytical value for aggregation."
+        return (
+            "Useful for record identification and joins, but usually "
+            "has limited direct analytical value."
+        )
+
+    if semantic_role == "numerical measure":
+        return (
+            "Useful for descriptive statistics, distributions, "
+            "comparisons, correlations and quantitative analysis."
+        )
 
     if semantic_role == "datetime":
-        return "Useful for temporal analysis, trend evaluation, seasonality detection, and time-series aggregation."
+        return (
+            "Useful for temporal trends, ordering, time intervals, "
+            "seasonality and aggregation."
+        )
 
-    if detected_type == "numerical":
-        if stats.get("std") == 0.0:
-            return "Limited analytical usefulness due to zero variance across observations."
-        return "Useful for descriptive statistics, distribution profiling, percentile analysis, and numerical correlation studies."
+    if semantic_role == "categorical feature":
+        return (
+            "Useful for grouping, segmentation, frequency analysis "
+            "and categorical comparisons."
+        )
 
-    if detected_type == "boolean":
-        return "Useful for binary filtering, proportion estimation, and cross-tabulation."
+    if semantic_role == "contact information":
+        return (
+            "Useful for contact-data profiling and quality checks, "
+            "but usually not as a direct analytical variable."
+        )
 
-    if detected_type == "text":
-        return "Useful for string length profiling, keyword extraction, and natural language processing."
+    if semantic_role == "text":
+        return (
+            "Useful for text profiling, keyword analysis, search "
+            "and natural-language processing."
+        )
 
-    if detected_type == "categorical":
-        if semantic_role == "high cardinality":
-            return "Useful for high-granularity grouping; may require bucketing long-tail categories for macro analysis."
-        return "Useful for group comparisons, segmentation, frequency distribution, and categorical cross-tabulation."
+    if semantic_role == "target candidate":
+        return (
+            "Useful as a potential prediction target after validating "
+            "the intended modeling objective."
+        )
 
-    return "Limited analytical usefulness without data cleaning and schema validation."
+    return (
+        "Limited analytical usefulness until the column type "
+        "is validated."
+    )
 
+
+# ---------------------------------------------------------------------
+# ML usefulness
+# ---------------------------------------------------------------------
 
 def _determine_ml_usefulness(
     detected_type: str,
     semantic_role: str,
-    col_info: Dict[str, Any],
-    row_count: int,
 ) -> str:
-    """Provide factual, deterministic ML usefulness guidance."""
-    if row_count == 0:
-        return "Unsuitable for machine learning due to empty dataset."
-
-    missing_pct = col_info.get("missing_percentage", 0.0)
-    is_target_cand = col_info.get("is_target_candidate", False)
-
-    if semantic_role == "all missing":
-        return "Unsuitable for machine learning in its current state because all values are missing."
-
-    if semantic_role == "constant":
-        return "Likely unsuitable as a predictive feature because it is constant with zero variance."
 
     if semantic_role == "identifier":
-        return "Potentially an identifier; exclude or use caution to prevent data leakage and memorization."
+        return (
+            "Use caution; identifier-like fields can cause data "
+            "leakage or memorization."
+        )
 
-    if semantic_role == "target candidate" or is_target_cand:
-        return "Target candidate based on existing target suitability evidence."
+    if semantic_role == "numerical measure":
+        return (
+            "Potential numerical ML feature after appropriate "
+            "validation and preprocessing."
+        )
 
-    if missing_pct >= 50.0:
-        return f"High missingness ({missing_pct:.1f}%); requires substantial imputation or removal before model training."
+    if semantic_role == "categorical feature":
+        return (
+            "Potential categorical ML feature after appropriate encoding."
+        )
 
-    if semantic_role == "datetime" or detected_type == "datetime":
-        return "Can be engineered into temporal features (e.g., day of week, month, elapsed time) for modeling."
+    if semantic_role == "datetime":
+        return (
+            "Can be transformed into temporal features such as "
+            "year, month, day, duration or elapsed time."
+        )
 
-    if detected_type == "boolean":
-        return "Can be used directly as a binary indicator feature (0/1)."
+    if semantic_role == "text":
+        return (
+            "Requires text preprocessing such as vectorization "
+            "or embeddings before ML use."
+        )
 
-    if detected_type == "numerical":
-        return "Potentially useful as a numerical predictive feature (may benefit from normalization or scaling)."
+    if semantic_role == "contact information":
+        return (
+            "Usually requires feature extraction and privacy-aware "
+            "preprocessing before ML use."
+        )
 
-    if detected_type == "text":
-        return "Requires text vectorization (e.g., TF-IDF, tokenization, or embeddings) before use in predictive models."
+    if semantic_role == "target candidate":
+        return (
+            "Potential target variable based on available schema "
+            "and target evidence."
+        )
 
-    if detected_type == "categorical":
-        if semantic_role == "high cardinality":
-            return "High-cardinality categorical feature; requires dimensionality reduction or target/frequency encoding."
-        return "Potentially useful as a categorical feature after appropriate one-hot or ordinal encoding."
-
-    return "Evaluate data quality and distribution before including in model training."
+    return (
+        "Validate type and data quality before using the column "
+        "in machine learning."
+    )
 
 
-# ============================================================
-# STATISTICAL EXTRACTION
-# ============================================================
+# ---------------------------------------------------------------------
+# Statistics
+# ---------------------------------------------------------------------
 
 def _extract_column_statistics(
-    col_name: str,
+    series: pd.Series,
     detected_type: str,
-    evidence: Dict[str, Any],
-    df: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
-    """
-    Extract factual statistics appropriate for the column type.
-    Reuses Evidence calculations wherever available.
-    """
-    num_stats = evidence.get("numerical_statistics", {})
-    cat_stats = evidence.get("categorical_statistics", {})
+    """Extract safe, useful statistics without changing the data."""
+
+    values = _get_non_missing_values(series)
+
+    stats: Dict[str, Any] = {
+        "count": int(len(series)),
+        "non_missing": int(len(values)),
+        "missing": int(len(series) - len(values)),
+        "unique": int(values.astype(str).nunique())
+        if not values.empty
+        else 0,
+    }
+
+    if values.empty:
+        return stats
 
     if detected_type == "numerical":
-        if col_name in num_stats:
-            return dict(num_stats[col_name])
-        if df is not None and col_name in df.columns:
-            s = pd.to_numeric(df[col_name], errors="coerce").dropna()
-            if len(s) == 0:
-                return {
-                    "count": 0, "mean": None, "std": None, "min": None,
-                    "q25": None, "median": None, "q75": None, "max": None,
-                    "range": None, "skewness": None,
+        numeric = pd.to_numeric(
+            values.astype(str)
+            .str.replace(",", "", regex=False)
+            .str.strip(),
+            errors="coerce",
+        ).dropna()
+
+        if not numeric.empty:
+            stats.update(
+                {
+                    "mean": _to_serializable(numeric.mean()),
+                    "median": _to_serializable(numeric.median()),
+                    "min": _to_serializable(numeric.min()),
+                    "max": _to_serializable(numeric.max()),
+                    "std": _to_serializable(numeric.std()),
                 }
-            std_val = float(s.std()) if len(s) > 1 else 0.0
-            skew_val = float(s.skew()) if len(s) >= 3 else None
-            return {
-                "count": len(s),
-                "mean": round(float(s.mean()), 4),
-                "std": round(std_val, 4) if std_val is not None else None,
-                "min": round(float(s.min()), 4),
-                "q25": round(float(s.quantile(0.25)), 4),
-                "median": round(float(s.median()), 4),
-                "q75": round(float(s.quantile(0.75)), 4),
-                "max": round(float(s.max()), 4),
-                "range": round(float(s.max() - s.min()), 4),
-                "skewness": round(skew_val, 4) if skew_val is not None and not math.isnan(skew_val) else None,
+            )
+
+    elif detected_type == "categorical":
+        counts = (
+            values.astype(str)
+            .value_counts()
+            .head(10)
+            .to_dict()
+        )
+
+        stats["top_values"] = {
+            str(k): int(v)
+            for k, v in counts.items()
+        }
+
+    elif detected_type == "text":
+        text = values.astype(str)
+
+        stats.update(
+            {
+                "average_length": _to_serializable(
+                    text.str.len().mean()
+                ),
+                "maximum_length": int(text.str.len().max()),
             }
-        return {
-            "count": 0, "mean": None, "std": None, "min": None,
-            "q25": None, "median": None, "q75": None, "max": None,
-            "range": None, "skewness": None,
-        }
+        )
 
-    if detected_type in ("categorical", "boolean", "text"):
-        if col_name in cat_stats:
-            d = dict(cat_stats[col_name])
-            d["cardinality"] = d.get("unique_count", 0)
-            return d
-        if df is not None and col_name in df.columns:
-            s = df[col_name].dropna()
-            counts = s.value_counts()
-            top_cat = str(counts.index[0]) if not counts.empty else None
-            top_freq = int(counts.iloc[0]) if not counts.empty else 0
-            dom_pct = round(safe_percentage(top_freq, len(df)), 2) if len(df) > 0 else 0.0
-            top_counts = {str(k): int(v) for k, v in counts.head(10).items()}
-            return {
-                "count": len(s),
-                "unique_count": int(s.nunique()),
-                "cardinality": int(s.nunique()),
-                "top_category": top_cat,
-                "top_frequency": top_freq,
-                "dominance_percentage": dom_pct,
-                "category_counts": top_counts,
-            }
-        return {
-            "count": 0, "unique_count": 0, "cardinality": 0,
-            "top_category": None, "top_frequency": 0,
-            "dominance_percentage": 0.0, "category_counts": {},
-        }
+    elif detected_type == "datetime":
+        parsed = pd.to_datetime(
+            values.astype(str),
+            errors="coerce",
+            format="mixed",
+        ).dropna()
 
-    if detected_type == "datetime":
-        if df is not None and col_name in df.columns:
-            try:
-                dt_s = pd.to_datetime(df[col_name], errors="coerce").dropna()
-                if not dt_s.empty:
-                    min_dt = dt_s.min()
-                    max_dt = dt_s.max()
-                    range_days = round((max_dt - min_dt).total_seconds() / 86400.0, 2)
-                    return {
-                        "count": len(dt_s),
-                        "min_date": min_dt.isoformat(),
-                        "max_date": max_dt.isoformat(),
-                        "range_days": range_days,
-                        "unique_dates": int(dt_s.nunique()),
-                    }
-            except Exception:
-                pass
-        return {
-            "count": 0, "min_date": None, "max_date": None,
-            "range_days": None, "unique_dates": 0,
-        }
+        if not parsed.empty:
+            stats.update(
+                {
+                    "earliest": _to_serializable(parsed.min()),
+                    "latest": _to_serializable(parsed.max()),
+                }
+            )
 
-    return {}
+    return stats
 
 
-# ============================================================
-# MAIN PUBLIC API
-# ============================================================
+# ---------------------------------------------------------------------
+# Main public API
+# ---------------------------------------------------------------------
 
 def build_data_dictionary(
-    evidence_or_df: Union[Dict[str, Any], pd.DataFrame, None],
-    dataset_name: Optional[str] = None,
-    max_columns: Optional[int] = None,
+    df: pd.DataFrame,
 ) -> Dict[str, Any]:
     """
-    Construct a deterministic AI Data Dictionary / Column Intelligence package.
+    Build a generalized AI Data Dictionary.
 
-    Parameters:
-    -----------
-    evidence_or_df : Union[Dict[str, Any], pd.DataFrame, None]
-        Pre-built Evidence dict from engine.evidence.build_evidence, raw DataFrame, or None.
-    dataset_name : Optional[str]
-        Optional name or label for the dataset.
-    max_columns : Optional[int]
-        Maximum number of columns to return in the 'columns' list. If None, returns all.
+    Parameters
+    ----------
+    df:
+        Input dataframe.
 
-    Returns:
-    --------
-    Dict[str, Any]
-        JSON-serializable data dictionary package containing:
-        - dataset_name
-        - column_count
-        - returned_column_count
-        - truncated
-        - columns
-        - summary
-        - generated_from
+    Returns
+    -------
+    dict
+        JSON-serializable dictionary describing every column.
+
+    The input dataframe is never modified.
     """
-    # 1. Resolve Evidence Object and Source
-    raw_df: Optional[pd.DataFrame] = None
 
-    if isinstance(evidence_or_df, dict) and "structure" in evidence_or_df:
-        evidence = evidence_or_df
-        source = "evidence"
-        name = dataset_name or evidence.get("metadata", {}).get("dataset_name", "unnamed_dataset")
-    elif isinstance(evidence_or_df, pd.DataFrame):
-        raw_df = evidence_or_df
-        # Check if df contains complex columns or unsupported types that cause numpy quantile/describe to fail
-        has_complex = any(pd.api.types.is_complex_dtype(evidence_or_df[c]) for c in evidence_or_df.columns)
-        if has_complex:
-            safe_df = evidence_or_df.copy(deep=False)
-            for c in evidence_or_df.columns:
-                if pd.api.types.is_complex_dtype(evidence_or_df[c]):
-                    safe_df[c] = evidence_or_df[c].astype(str)
-            evidence = build_evidence(safe_df, dataset_name=dataset_name)
-        else:
-            evidence = build_evidence(raw_df, dataset_name=dataset_name)
-        source = "dataframe"
-        name = dataset_name or evidence.get("metadata", {}).get("dataset_name", "unnamed_dataset")
-    elif evidence_or_df is None:
-        evidence = build_evidence(None, dataset_name=dataset_name)
-        source = "none"
-        name = dataset_name or "unnamed_dataset"
-    else:
-        evidence = build_evidence(None, dataset_name=dataset_name)
-        source = "none"
-        name = dataset_name or "unnamed_dataset"
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("build_data_dictionary expects a pandas DataFrame.")
 
-    structure = evidence.get("structure", {})
-    row_count = structure.get("row_count", 0)
-    evidence_cols = evidence.get("columns", [])
-    outlier_findings = evidence.get("quality", {}).get("outlier_findings", [])
+    result: Dict[str, Any] = {
+        "dataset_summary": {
+            "rows": int(len(df)),
+            "columns": int(len(df.columns)),
+        },
+        "columns": [],
+    }
 
-    # 2. Build Column Intelligence Entries
-    columns_intelligence: List[Dict[str, Any]] = []
+    for column in df.columns:
 
-    for col_info in evidence_cols:
-        col_name = str(col_info.get("name", ""))
+        series = df[column]
 
-        # Type detection
-        detected_type, type_conf = _detect_column_type(col_name, col_info, df=raw_df)
+        detection = _detect_column_type(
+            series,
+            str(column),
+        )
 
-        # Semantic role
-        semantic_role, role_conf = _determine_semantic_role(col_name, detected_type, col_info, row_count)
+        detected_type = detection["type"]
+        confidence = int(round(detection["confidence"]))
 
-        # Combined confidence
-        confidence = round(float(role_conf), 2)
+        semantic_role = _determine_semantic_role(
+            series,
+            str(column),
+            detected_type,
+        )
 
-        # Missingness & Uniqueness
-        missing_dict = {
-            "count": int(col_info.get("missing_count", 0)),
-            "percentage": float(round(col_info.get("missing_percentage", 0.0), 2)),
-        }
-        unique_dict = {
-            "count": int(col_info.get("unique_count", 0)),
-            "percentage": float(round(col_info.get("unique_percentage", 0.0), 2)),
-        }
+        meaning = _generate_possible_meaning(
+            str(column),
+            detected_type,
+            semantic_role,
+            series,
+        )
 
-        # Statistics
-        stats = _extract_column_statistics(col_name, detected_type, evidence, df=raw_df)
-
-        # Cautious interpretation
-        possible_meaning = _generate_possible_meaning(col_name, detected_type, semantic_role, col_info)
-
-        # Quality concerns
         quality_concerns = _collect_quality_concerns(
-            col_name, detected_type, semantic_role, col_info, stats, outlier_findings, row_count
+            series,
+            detected_type,
         )
 
-        # Analytical & ML usefulness
         analytical_usefulness = _determine_analytical_usefulness(
-            detected_type, semantic_role, stats, row_count
+            detected_type,
+            semantic_role,
         )
+
         ml_usefulness = _determine_ml_usefulness(
-            detected_type, semantic_role, col_info, row_count
+            detected_type,
+            semantic_role,
         )
 
-        column_entry = {
-            "name": col_name,
-            "detected_type": detected_type,
-            "semantic_role": semantic_role,
-            "confidence": confidence,
-            "missing": missing_dict,
-            "unique": unique_dict,
-            "statistics": stats,
-            "possible_meaning": possible_meaning,
-            "quality_concerns": quality_concerns,
-            "analytical_usefulness": analytical_usefulness,
-            "ml_usefulness": ml_usefulness,
-            "is_target_candidate": bool(col_info.get("is_target_candidate", False)),
-            "is_constant": bool(col_info.get("is_constant", False)),
-            "is_all_missing": bool(col_info.get("is_all_missing", False)),
-        }
+        statistics = _extract_column_statistics(
+            series,
+            detected_type,
+        )
 
-        columns_intelligence.append(column_entry)
+        result["columns"].append(
+            {
+                "column": str(column),
+                "name": str(column),
+                "column_name": str(column),
+                "type": detected_type,
+                "detected_type": detected_type,
+                "data_type": detected_type,
+                "semantic_role": semantic_role,
+                "analytical_role": semantic_role,
+                "confidence": confidence,
+                "possible_meaning": meaning,
+                "quality_concerns": quality_concerns,
+                "analytical_usefulness": analytical_usefulness,
+                "ml_usefulness": ml_usefulness,
+                "statistics": statistics,
+            }
+        )
 
-    # 3. Truncate by max_columns if specified
-    total_columns_count = len(columns_intelligence)
-    if max_columns is not None and max_columns > 0:
-        returned_columns = columns_intelligence[:max_columns]
-        is_truncated = len(returned_columns) < total_columns_count
-    else:
-        returned_columns = columns_intelligence
-        is_truncated = False
+    return result
 
-    # 4. Construct Dataset Summary
-    summary = {
-        "total_columns": total_columns_count,
-        "numeric_columns": sum(1 for c in columns_intelligence if c["detected_type"] == "numerical"),
-        "categorical_columns": sum(1 for c in columns_intelligence if c["detected_type"] == "categorical"),
-        "datetime_columns": sum(1 for c in columns_intelligence if c["detected_type"] == "datetime"),
-        "boolean_columns": sum(1 for c in columns_intelligence if c["detected_type"] == "boolean"),
-        "columns_with_missing": sum(1 for c in columns_intelligence if c["missing"]["count"] > 0),
-        "high_cardinality_columns": sum(1 for c in columns_intelligence if c["semantic_role"] == "high cardinality"),
-        "constant_columns": sum(1 for c in columns_intelligence if c["semantic_role"] == "constant"),
-        "all_missing_columns": sum(1 for c in columns_intelligence if c["semantic_role"] == "all missing"),
-        "identifier_like_columns": sum(1 for c in columns_intelligence if c["semantic_role"] == "identifier"),
-        "target_candidates": sum(
-            1 for c in columns_intelligence
-            if c["semantic_role"] == "target candidate" or c.get("is_target_candidate", False)
-        ),
-    }
 
-    # 5. Assemble Final Payload
-    output = {
-        "dataset_name": name,
-        "column_count": total_columns_count,
-        "returned_column_count": len(returned_columns),
-        "truncated": is_truncated,
-        "columns": returned_columns,
-        "summary": summary,
-        "generated_from": source,
-    }
-
-    return _to_serializable(output)
-
+__all__ = [
+    "build_data_dictionary",
+]

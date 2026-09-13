@@ -172,7 +172,6 @@ uploaded_file, previous_file, updated_file = (
 
 
 # ============================================================
-# ============================================================
 # SIDEBAR SYSTEM CAPABILITIES
 # ============================================================
 
@@ -199,7 +198,13 @@ with st.sidebar:
     ]
 
     for label, status in capabilities:
-        badge_kind = "success" if status in ["READY", "ACTIVE"] else "info"
+
+        badge_kind = (
+            "success"
+            if status in ["READY", "ACTIVE"]
+            else "info"
+        )
+
         st.markdown(
             f"""
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 0.78rem; border-bottom: 1px solid rgba(255,255,255,0.04);">
@@ -217,16 +222,22 @@ with st.sidebar:
 
 if uploaded_file is None:
 
-    st.info("👈 **START HERE**: Open the left **Data Input Panel** (`>>` button in top left) and upload a CSV or Excel dataset to activate the workspace.")
+    st.info(
+        "👈 **START HERE**: Open the left **Data Input Panel** (`>>` button in top left) and upload a CSV or Excel dataset to activate the workspace."
+    )
 
     c1, c2 = st.columns(2)
+
     with c1:
+
         cards.info_card(
             "📁 Active Dataset Analysis",
             "Single File Intelligence",
             "Upload a CSV/XLSX file in the sidebar to explore column profiles, statistical summaries, quality issues, 3D visualizations, and ML readiness.",
         )
+
     with c2:
+
         cards.info_card(
             "🔄 Version Control Comparison",
             "V1 vs V2 Drift Intelligence",
@@ -234,7 +245,10 @@ if uploaded_file is None:
         )
 
     if previous_file is not None and updated_file is not None:
-        st.info("Previous and updated datasets detected in sidebar. Upload an active dataset to open the full workspace.")
+
+        st.info(
+            "Previous and updated datasets detected in sidebar. Upload an active dataset to open the full workspace."
+        )
 
     st.stop()
 
@@ -566,6 +580,7 @@ next_best_action = executive_summary[
 # ============================================================
 
 try:
+
     from engine.evidence import build_evidence
     from engine.health import calculate_health
     from engine.priority_engine import build_prioritized_insights
@@ -575,15 +590,58 @@ try:
     from engine.dictionary_engine import build_data_dictionary
     from engine.executive_engine import build_executive_intelligence
 
-    evidence_payload = build_evidence(df, dataset_name=uploaded_file.name if uploaded_file else "active_dataset")
-    health_payload = calculate_health(evidence_payload)
-    priority_payload = build_prioritized_insights(evidence_payload, health_payload)
-    story_payload = build_data_story(evidence_payload, health_payload, priority_payload)
-    recommendation_payload = recommend_next_analysis(evidence_payload, health_payload, priority_payload)
-    anomaly_payload = investigate_anomalies(evidence_payload)
-    dictionary_payload = build_data_dictionary(evidence_payload)
-    executive_intel_payload = build_executive_intelligence(evidence_payload, dataset_name=uploaded_file.name if uploaded_file else "active_dataset")
-except Exception:
+    evidence_payload = build_evidence(
+        df,
+        dataset_name=(
+            uploaded_file.name
+            if uploaded_file
+            else "active_dataset"
+        ),
+    )
+
+    health_payload = calculate_health(
+        evidence_payload
+    )
+
+    priority_payload = build_prioritized_insights(
+        evidence_payload,
+        health_payload,
+    )
+
+    story_payload = build_data_story(
+        evidence_payload,
+        health_payload,
+        priority_payload,
+    )
+
+    recommendation_payload = recommend_next_analysis(
+        evidence_payload,
+        health_payload,
+        priority_payload,
+    )
+
+    anomaly_payload = investigate_anomalies(
+        evidence_payload
+    )
+
+    # IMPORTANT:
+    # build_data_dictionary expects the actual
+    # pandas DataFrame, not evidence_payload.
+    dictionary_payload = build_data_dictionary(
+        df
+    )
+
+    executive_intel_payload = build_executive_intelligence(
+        evidence_payload,
+        dataset_name=(
+            uploaded_file.name
+            if uploaded_file
+            else "active_dataset"
+        ),
+    )
+
+except Exception as exc:
+    st.error(f"Adaptive Intelligence Engine Error: {exc}")
     evidence_payload = {}
     health_payload = {}
     priority_payload = {}
