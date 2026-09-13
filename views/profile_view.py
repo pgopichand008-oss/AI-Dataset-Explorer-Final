@@ -41,6 +41,7 @@ def render(
         "📈 Distribution Lab",
         "🎯 Outlier Analysis",
         "❓ Missing Value Intelligence",
+        "🤖 AI Data Dictionary",
     ])
 
     # ----------------------------------------------------
@@ -270,3 +271,98 @@ def render(
             st.dataframe(pd.DataFrame(missing_data), use_container_width=True, hide_index=True)
         else:
             cards.finding_card("100% Complete", "No missing values detected in any column.", "success")
+
+    # ----------------------------------------------------
+    # TAB 6: AI DATA DICTIONARY
+    # ----------------------------------------------------
+    with p_tab6:
+        st.markdown("#### 🤖 AI Data Dictionary")
+        st.caption("Factual column-level intelligence, semantic attribute roles, and analytical guidance.")
+
+        if not data_dictionary or not isinstance(data_dictionary, dict) or not isinstance(data_dictionary.get("columns"), list) or not data_dictionary.get("columns"):
+            st.info("AI Data Dictionary is not available for this dataset.")
+        else:
+            cols_dict_list = data_dictionary.get("columns", [])
+            dict_rows = []
+            for c in cols_dict_list:
+                if not isinstance(c, dict):
+                    continue
+                name = c.get("name", "Not available")
+                det_type = c.get("detected_type", "Not available")
+                role = c.get("semantic_role", "Not available")
+                conf = c.get("confidence")
+                if conf is not None:
+                    try:
+                        conf_val = float(conf)
+                        conf_str = f"{conf_val * 100:.0f}%" if conf_val <= 1.0 else f"{conf_val:.0f}%"
+                    except Exception:
+                        conf_str = str(conf)
+                else:
+                    conf_str = "Not available"
+
+                meaning = c.get("possible_meaning", "Not available")
+
+                concerns = c.get("quality_concerns", [])
+                if isinstance(concerns, list):
+                    concerns_str = ", ".join(str(item) for item in concerns) if concerns else "None detected"
+                elif isinstance(concerns, str):
+                    concerns_str = concerns if concerns.strip() else "None detected"
+                else:
+                    concerns_str = "Not available"
+
+                analytical = c.get("analytical_usefulness", "Not available")
+                ml_use = c.get("ml_usefulness", "Not available")
+
+                dict_rows.append({
+                    "Column Name": name,
+                    "Detected Data Type": det_type,
+                    "Semantic Role": role,
+                    "Confidence": conf_str,
+                    "Possible Meaning": meaning,
+                    "Quality Concerns": concerns_str,
+                    "Analytical Usefulness": analytical,
+                    "ML Usefulness": ml_use,
+                })
+
+            if dict_rows:
+                dict_df = pd.DataFrame(dict_rows)
+                st.dataframe(dict_df, use_container_width=True, hide_index=True)
+
+                st.divider()
+                st.markdown("##### 🔍 Deep Column Intelligence Explorer")
+                for c in cols_dict_list:
+                    if not isinstance(c, dict):
+                        continue
+                    c_name = c.get("name", "Not available")
+                    c_type = c.get("detected_type", "Not available")
+                    c_role = c.get("semantic_role", "Not available")
+                    c_conf = c.get("confidence")
+                    if c_conf is not None:
+                        try:
+                            c_conf_val = float(c_conf)
+                            c_conf_str = f"{c_conf_val * 100:.0f}%" if c_conf_val <= 1.0 else f"{c_conf_val:.0f}%"
+                        except Exception:
+                            c_conf_str = str(c_conf)
+                    else:
+                        c_conf_str = "Not available"
+
+                    c_meaning = c.get("possible_meaning", "Not available")
+                    c_concerns = c.get("quality_concerns", [])
+                    if isinstance(c_concerns, list):
+                        c_concerns_str = ", ".join(str(item) for item in c_concerns) if c_concerns else "None detected"
+                    elif isinstance(c_concerns, str):
+                        c_concerns_str = c_concerns if c_concerns.strip() else "None detected"
+                    else:
+                        c_concerns_str = "Not available"
+
+                    c_analytical = c.get("analytical_usefulness", "Not available")
+                    c_ml = c.get("ml_usefulness", "Not available")
+
+                    with st.expander(f"📌 {c_name} ({c_type} • {c_role})"):
+                        st.markdown(f"**Confidence:** `{c_conf_str}`")
+                        st.markdown(f"**Possible Meaning:** {c_meaning}")
+                        st.markdown(f"**Quality Concerns:** {c_concerns_str}")
+                        st.markdown(f"**Analytical Usefulness:** {c_analytical}")
+                        st.markdown(f"**ML Usefulness:** {c_ml}")
+            else:
+                st.info("AI Data Dictionary is not available for this dataset.")
