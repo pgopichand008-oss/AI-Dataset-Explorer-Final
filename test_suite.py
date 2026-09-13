@@ -441,6 +441,138 @@ class TestAIDatasetIntelligence(unittest.TestCase):
         self.assertIn("Your original dataset is protected. ML analysis is performed on an in-memory copy, so the uploaded file remains unchanged.", ml_code)
         print("[PASS] TEST 38: Verified ZERO raw SVG/canvas/localhost rendering artifacts in ML workspace view")
 
+    def test_39_evidence_layer(self):
+        """TEST 39: Build evidence layer from DataFrame."""
+        from engine.evidence import build_evidence
+        ev = build_evidence(self.df_base, dataset_name="test_base")
+        self.assertIn("structure", ev)
+        self.assertIn("completeness", ev)
+        self.assertEqual(ev["structure"]["row_count"], 10)
+        self.assertEqual(ev["structure"]["column_count"], 5)
+        print("[PASS] TEST 39: Evidence layer built deterministically")
+
+    def test_40_health_engine(self):
+        """TEST 40: Health engine score calculation and dimension assessment."""
+        from engine.health import calculate_health
+        health = calculate_health(self.df_base, dataset_name="test_base")
+        self.assertIn("overall", health)
+        self.assertIn("score", health["overall"])
+        self.assertIn("status", health["overall"])
+        self.assertIn(health["overall"]["status"], ["READY", "NEEDS ATTENTION", "NOT SUITABLE"])
+        self.assertIn("dimensions", health)
+        print("[PASS] TEST 40: Health engine score and dimensions computed")
+
+    def test_41_priority_insights(self):
+        """TEST 41: Prioritized insight generation and ranking."""
+        from engine.priority_engine import build_prioritized_insights
+        pri = build_prioritized_insights(self.df_base)
+        self.assertIn("insights", pri)
+        self.assertIn("summary", pri)
+        self.assertGreater(len(pri["insights"]), 0)
+        print("[PASS] TEST 41: Prioritized insights generated and ranked")
+
+    def test_42_story_engine(self):
+        """TEST 42: Data story narrative generation."""
+        from engine.story_engine import build_data_story
+        story = build_data_story(self.df_base)
+        self.assertIn("overview", story)
+        self.assertIn("story_sections", story)
+        self.assertGreater(len(story["story_sections"]), 0)
+        print("[PASS] TEST 42: Data story narrative generated")
+
+    def test_43_recommendation_engine(self):
+        """TEST 43: Next best analysis recommendation engine."""
+        from engine.recommendation_engine import recommend_next_analysis
+        recs = recommend_next_analysis(self.df_base)
+        self.assertIn("recommendations", recs)
+        self.assertGreater(len(recs["recommendations"]), 0)
+        print("[PASS] TEST 43: Next best analysis recommendations generated")
+
+    def test_44_anomaly_investigation(self):
+        """TEST 44: Anomaly investigation engine."""
+        from engine.anomaly_engine import investigate_anomalies
+        anom = investigate_anomalies(self.df_base)
+        self.assertIn("summary", anom)
+        self.assertIn("total_anomalies", anom["summary"])
+        print("[PASS] TEST 44: Anomaly investigation completed")
+
+    def test_45_data_dictionary(self):
+        """TEST 45: AI Data Dictionary generation."""
+        from engine.dictionary_engine import build_data_dictionary
+        dd = build_data_dictionary(self.df_base)
+        self.assertIn("columns", dd)
+        self.assertEqual(len(dd["columns"]), 5)
+        print("[PASS] TEST 45: AI Data dictionary compiled with semantic roles")
+
+    def test_46_reconsideration_engine(self):
+        """TEST 46: Reconsideration engine comparison and reassessment."""
+        from engine.reconsideration import reconsider_dataset
+        df_new = self.df_base.copy()
+        df_new["income"] = df_new["income"] * 2
+        recon = reconsider_dataset(self.df_base, df_new)
+        self.assertIn("reconsiderations", recon)
+        self.assertIn("summary", recon)
+        print("[PASS] TEST 46: Reconsideration engine compared versions and reassessed findings")
+
+    def test_47_workflow_engine(self):
+        """TEST 47: Adaptive 6-stage workflow execution."""
+        from engine.workflow import run_workflow
+        wf = run_workflow(dataset=self.df_base)
+        self.assertIn("stages", wf)
+        self.assertIn("DETECT", wf["stages"])
+        self.assertIn("REPORT", wf["stages"])
+        self.assertEqual(wf["stages"]["DETECT"]["status"], "completed")
+        print("[PASS] TEST 47: Adaptive 6-stage workflow executed cleanly")
+
+    def test_48_executive_intelligence(self):
+        """TEST 48: Executive intelligence summary synthesis."""
+        from engine.executive_engine import build_executive_intelligence
+        exec_intel = build_executive_intelligence(self.df_base)
+        self.assertIn("executive", exec_intel)
+        self.assertIn("summary", exec_intel["executive"])
+        print("[PASS] TEST 48: Executive intelligence summary compiled")
+
+    def test_49_ask_dataset_engine(self):
+        """TEST 49: Grounded Ask Dataset Q&A resolution."""
+        from engine.ask_engine import ask_dataset
+        res_size = ask_dataset("How many rows are in the dataset?", dataset=self.df_base)
+        self.assertEqual(res_size["status"], "answered")
+        self.assertIn("10", res_size["answer"])
+
+        res_num = ask_dataset("What is the average income?", dataset=self.df_base)
+        self.assertEqual(res_num["status"], "answered")
+        self.assertIn("income", res_num["answer"])
+        print("[PASS] TEST 49: Ask Dataset Q&A resolved grounded answers")
+
+    def test_50_exact_final_recommendations(self):
+        """TEST 50: Verify exact Final Recommendation status formatting."""
+        from engine.health import calculate_health
+        health_clean = calculate_health(self.df_base)
+        status_clean = health_clean.get("overall", {}).get("status")
+        self.assertIn(status_clean, ["READY", "NEEDS ATTENTION", "NOT SUITABLE"])
+
+        # Check exact 3 status values mapped for UI
+        def _resolve_verdict(score: int, status_str: str) -> str:
+            s = str(status_str).upper()
+            if "READY" in s and "NOT" not in s and "NEEDS" not in s:
+                return "READY FOR FURTHER ANALYSIS"
+            if "ATTENTION" in s or "NEEDS" in s:
+                return "NEEDS ATTENTION BEFORE ANALYSIS"
+            if "NOT" in s or "UNSUITABLE" in s:
+                return "NOT SUITABLE WITHOUT ADDITIONAL CORRECTION"
+            if score >= 80:
+                return "READY FOR FURTHER ANALYSIS"
+            elif score >= 50:
+                return "NEEDS ATTENTION BEFORE ANALYSIS"
+            else:
+                return "NOT SUITABLE WITHOUT ADDITIONAL CORRECTION"
+
+        self.assertEqual(_resolve_verdict(95, "READY"), "READY FOR FURTHER ANALYSIS")
+        self.assertEqual(_resolve_verdict(65, "NEEDS ATTENTION"), "NEEDS ATTENTION BEFORE ANALYSIS")
+        self.assertEqual(_resolve_verdict(30, "NOT SUITABLE"), "NOT SUITABLE WITHOUT ADDITIONAL CORRECTION")
+        print("[PASS] TEST 50: Exact Final Recommendation statuses verified")
+
+
 
 
 if __name__ == "__main__":

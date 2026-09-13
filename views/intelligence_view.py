@@ -16,6 +16,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from components import cards
 from components.cards import (
     section_header,
     info_card,
@@ -551,6 +552,10 @@ def render(
     agent_decisions,
     visual_plan_df,
     target_candidates,
+    prioritized_insights: dict | None = None,
+    story: dict | None = None,
+    recommendations: dict | None = None,
+    evidence: dict | None = None,
 ):
     """
     Render the Dataset Intelligence workspace.
@@ -607,6 +612,57 @@ def render(
         )
 
     st.write("")
+
+    # ========================================================
+    # PRIORITIZED INSIGHTS
+    # ========================================================
+    if prioritized_insights and isinstance(prioritized_insights, dict) and prioritized_insights.get("insights"):
+        section_header(
+            "Prioritized Findings & Impact Ranking",
+            "Ranked analytical findings ordered deterministically by impact and severity.",
+        )
+        insights_list = prioritized_insights.get("insights", [])
+        for idx, item in enumerate(insights_list[:5], start=1):
+            finding_card(
+                f"Rank #{idx} — {item.get('title', 'Finding')}",
+                f"<strong>Category:</strong> {item.get('category', 'General')}<br>"
+                f"<strong>Severity:</strong> {item.get('severity', 'MEDIUM')}<br>"
+                f"<strong>Impact:</strong> {item.get('impact', '')}<br>"
+                f"<strong>Action:</strong> {item.get('recommended_action', item.get('action', ''))}",
+                "danger" if item.get('severity') == "CRITICAL" else ("warning" if item.get('severity') in ["HIGH", "MEDIUM"] else "info")
+            )
+        st.divider()
+
+    # ========================================================
+    # DATA STORY MODE
+    # ========================================================
+    if story and isinstance(story, dict) and story.get("narrative"):
+        section_header(
+            "Data Story Narrative",
+            "Structured automated data story highlighting key dataset findings.",
+        )
+        narr = story.get("narrative", {})
+        cards.data_story_card(
+            what_happened=narr.get("what_happened", ""),
+            why_it_matters=narr.get("why_it_matters", ""),
+            what_to_investigate=narr.get("what_to_investigate", ""),
+        )
+        st.divider()
+
+    # ========================================================
+    # NEXT BEST ANALYSIS RECOMMENDATIONS
+    # ========================================================
+    if recommendations and isinstance(recommendations, dict) and recommendations.get("recommendations"):
+        section_header(
+            "Next Best Analysis Recommendations",
+            "Actionable analytical steps recommended by the intelligence engine.",
+        )
+        for rec in recommendations.get("recommendations", [])[:4]:
+            cards.next_best_analysis_card(
+                recommendation_title=rec.get("name", rec.get("title", "Next Analysis")),
+                reason=rec.get("reason", rec.get("description", "Recommended analytical action.")),
+            )
+        st.divider()
 
     # ========================================================
     # COLUMN INTELLIGENCE

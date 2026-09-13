@@ -235,10 +235,18 @@ def render(
     # --------------------------------------------------------
     st.divider()
     st.markdown("### 5. Final ML & Dataset Recommendation")
-    recommendation = result.get("recommendation", "UNKNOWN")
-    kind = {
-        "READY FOR FURTHER ANALYSIS": "success",
-        "NEEDS ATTENTION BEFORE ANALYSIS": "warning",
-        "NOT SUITABLE WITHOUT ADDITIONAL CORRECTION": "danger",
-    }.get(recommendation, "info")
+    raw_rec = str(result.get("recommendation", "UNKNOWN")).upper()
+    if "READY" in raw_rec and "NOT" not in raw_rec and "NEEDS" not in raw_rec:
+        recommendation = "READY FOR FURTHER ANALYSIS"
+        kind = "success"
+    elif "ATTENTION" in raw_rec or "NEEDS" in raw_rec:
+        recommendation = "NEEDS ATTENTION BEFORE ANALYSIS"
+        kind = "warning"
+    elif "NOT" in raw_rec or "CORRECTION" in raw_rec or "UNSUITABLE" in raw_rec:
+        recommendation = "NOT SUITABLE WITHOUT ADDITIONAL CORRECTION"
+        kind = "danger"
+    else:
+        recommendation = result.get("recommendation", "READY FOR FURTHER ANALYSIS")
+        kind = "info"
+
     cards.finding_card("Dataset Verdict", recommendation, kind)

@@ -529,7 +529,7 @@ visual_plan_df = pd.DataFrame(
 
 
 # ============================================================
-# EXECUTIVE SUMMARY
+# EXECUTIVE SUMMARY & ADAPTIVE INTELLIGENCE PIPELINE
 # ============================================================
 
 executive_summary = build_executive_summary(
@@ -559,6 +559,39 @@ key_opportunity = executive_summary[
 next_best_action = executive_summary[
     "Next Best Action"
 ]
+
+
+# ============================================================
+# ADAPTIVE DATASET INTELLIGENCE ENGINE PAYLOADS
+# ============================================================
+
+try:
+    from engine.evidence import build_evidence
+    from engine.health import calculate_health
+    from engine.priority_engine import build_prioritized_insights
+    from engine.story_engine import build_data_story
+    from engine.recommendation_engine import recommend_next_analysis
+    from engine.anomaly_engine import investigate_anomalies
+    from engine.dictionary_engine import build_data_dictionary
+    from engine.executive_engine import build_executive_intelligence
+
+    evidence_payload = build_evidence(df, dataset_name=uploaded_file.name if uploaded_file else "active_dataset")
+    health_payload = calculate_health(evidence_payload)
+    priority_payload = build_prioritized_insights(evidence_payload, health_payload)
+    story_payload = build_data_story(evidence_payload, health_payload, priority_payload)
+    recommendation_payload = recommend_next_analysis(evidence_payload, health_payload, priority_payload)
+    anomaly_payload = investigate_anomalies(evidence_payload)
+    dictionary_payload = build_data_dictionary(evidence_payload)
+    executive_intel_payload = build_executive_intelligence(evidence_payload, dataset_name=uploaded_file.name if uploaded_file else "active_dataset")
+except Exception:
+    evidence_payload = {}
+    health_payload = {}
+    priority_payload = {}
+    story_payload = {}
+    recommendation_payload = {}
+    anomaly_payload = {}
+    dictionary_payload = {}
+    executive_intel_payload = {}
 
 
 # ============================================================
@@ -710,6 +743,11 @@ with overview_tab:
         quality_status,
         ml_score,
         ml_status,
+        health=health_payload,
+        prioritized_insights=priority_payload,
+        story=story_payload,
+        recommendations=recommendation_payload,
+        executive_intel=executive_intel_payload,
     )
 
 
@@ -724,6 +762,7 @@ with profile_tab:
         column_intelligence_df,
         numerical_summary,
         categorical_summary_df,
+        data_dictionary=dictionary_payload,
     )
 
 
@@ -755,6 +794,8 @@ with quality_tab:
         missing_cells,
         duplicate_rows,
         total_outlier_values,
+        health=health_payload,
+        anomalies=anomaly_payload,
     )
 
 
@@ -779,11 +820,6 @@ with visual_tab:
 # ============================================================
 # EXPLAINABLE INTELLIGENCE VIEW
 # ============================================================
-#
-# IMPORTANT:
-# Current intelligence_view.py accepts exactly 4 arguments.
-# Therefore do NOT pass the two old legacy UI functions here.
-# ============================================================
 
 with intelligence_tab:
 
@@ -792,6 +828,10 @@ with intelligence_tab:
         agent_decisions,
         visual_plan_df,
         target_candidates,
+        prioritized_insights=priority_payload,
+        story=story_payload,
+        recommendations=recommendation_payload,
+        evidence=evidence_payload,
     )
 
 

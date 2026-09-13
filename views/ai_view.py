@@ -76,49 +76,74 @@ def render(
     if selected_question:
         st.markdown(f"#### 🔍 Query: *\"{selected_question}\"*")
         with st.spinner("Analyzing dataset facts to generate grounded response..."):
-
-            # Construct targeted answer based on real calculated facts
-            answer_text = ""
-            if "changed between" in selected_question.lower():
-                if change_result:
-                    changes = change_result.get("changes", {})
-                    answer_text = (
-                        f"**Dataset Evolution Summary:**\n"
-                        f"• Added columns (+): `{len(changes.get('added_columns', []))}`\n"
-                        f"• Removed columns (-): `{len(changes.get('removed_columns', []))}`\n"
-                        f"• Type conflicts: `{len(changes.get('type_changes', []))}`\n"
-                        f"• Renames detected (↔): `{len(changes.get('possible_renames', []))}`\n\n"
-                        f"**Verdict:** `{change_result.get('recommendation', 'N/A')}`"
+            # Call ask_dataset backend engine for grounded answer
+            try:
+                from engine.ask_engine import ask_dataset
+                ask_payload = ask_dataset(
+                    question=selected_question,
+                    dataset=df,
+                    workflow_state=change_result,
+                    use_gemini=False,
+                )
+                if isinstance(ask_payload, dict) and ask_payload.get("answer"):
+                    intent_info = ask_payload.get("intent", {})
+                    intent_name = intent_info.get("name", "ANALYTICAL_QUERY") if isinstance(intent_info, dict) else "ANALYTICAL_QUERY"
+                    confidence = intent_info.get("confidence", 0.95) if isinstance(intent_info, dict) else 0.95
+                    ev_info = ask_payload.get("evidence", {})
+                    ev_text = str(ev_info) if isinstance(ev_info, (str, dict)) and ev_info else ""
+                    
+                    cards.ask_dataset_card(
+                        question=selected_question,
+                        answer=ask_payload["answer"],
+                        intent_name=intent_name,
+                        confidence=confidence,
+                        evidence_text=ev_text,
                     )
                 else:
-                    answer_text = "Upload a Previous Dataset (V1) and Updated Dataset (V2) in the sidebar to inspect version changes."
-            elif "need attention" in selected_question.lower() or "columns" in selected_question.lower():
-                null_cols = df.columns[df.isna().any()].tolist()
-                answer_text = (
-                    f"**Columns Requiring Attention:**\n"
-                    f"• Columns with missing cells: `{', '.join(null_cols) if null_cols else 'None'}`\n"
-                    f"• Data Quality Score: `{quality_score}/100`"
-                )
-            elif "ready for ml" in selected_question.lower():
-                verdict = change_result.get("recommendation", "N/A") if change_result else ("READY" if ml_score >= 80 else "NEEDS ATTENTION")
-                answer_text = (
-                    f"**ML Readiness Evaluation:**\n"
-                    f"• Score: `{ml_score}/100`\n"
-                    f"• Overall Status: `{verdict}`\n"
-                    f"• Target Candidates: `{', '.join(target_candidates) if target_candidates else 'None'}`"
-                )
-            elif "reconsider" in selected_question.lower():
-                recon = change_result.get("reconsideration", {}) if change_result else {}
-                answer_text = (
-                    f"**Adaptive Reconsideration:**\n"
-                    f"• Status: `{recon.get('status', 'NO PRIOR FINDING')}`\n"
-                    f"• Message: {recon.get('message', 'No findings affected.')}"
-                )
-            else:
-                next_act = change_result.get("next_action", "Continue standard exploratory data analysis.") if change_result else "Address identified missing values and validate column data types."
-                answer_text = f"**Recommended Next Action:** `{next_act}`"
+                    cards.finding_card("Grounded Intelligence Answer", str(ask_payload.get("answer", "No answer found.")), "info")
+            except Exception:
+                # Construct targeted answer based on real calculated facts fallback
+                answer_text = ""
+                if "changed between" in selected_question.lower():
+                    if change_result:
+                        changes = change_result.get("changes", {})
+                        answer_text = (
+                            f"**Dataset Evolution Summary:**\n"
+                            f"• Added columns (+): `{len(changes.get('added_columns', []))}`\n"
+                            f"• Removed columns (-): `{len(changes.get('removed_columns', []))}`\n"
+                            f"• Type conflicts: `{len(changes.get('type_changes', []))}`\n"
+                            f"• Renames detected (↔): `{len(changes.get('possible_renames', []))}`\n\n"
+                            f"**Verdict:** `{change_result.get('recommendation', 'N/A')}`"
+                        )
+                    else:
+                        answer_text = "Upload a Previous Dataset (V1) and Updated Dataset (V2) in the sidebar to inspect version changes."
+                elif "need attention" in selected_question.lower() or "columns" in selected_question.lower():
+                    null_cols = df.columns[df.isna().any()].tolist()
+                    answer_text = (
+                        f"**Columns Requiring Attention:**\n"
+                        f"• Columns with missing cells: `{', '.join(null_cols) if null_cols else 'None'}`\n"
+                        f"• Data Quality Score: `{quality_score}/100`"
+                    )
+                elif "ready for ml" in selected_question.lower():
+                    verdict = change_result.get("recommendation", "N/A") if change_result else ("READY" if ml_score >= 80 else "NEEDS ATTENTION")
+                    answer_text = (
+                        f"**ML Readiness Evaluation:**\n"
+                        f"• Score: `{ml_score}/100`\n"
+                        f"• Overall Status: `{verdict}`\n"
+                        f"• Target Candidates: `{', '.join(target_candidates) if target_candidates else 'None'}`"
+                    )
+                elif "reconsider" in selected_question.lower():
+                    recon = change_result.get("reconsideration", {}) if change_result else {}
+                    answer_text = (
+                        f"**Adaptive Reconsideration:**\n"
+                        f"• Status: `{recon.get('status', 'NO PRIOR FINDING')}`\n"
+                        f"• Message: {recon.get('message', 'No findings affected.')}"
+                    )
+                else:
+                    next_act = change_result.get("next_action", "Continue standard exploratory data analysis.") if change_result else "Address identified missing values and validate column data types."
+                    answer_text = f"**Recommended Next Action:** `{next_act}`"
 
-            cards.finding_card("Grounded Intelligence Answer", answer_text, "info")
+                cards.finding_card("Grounded Intelligence Answer", answer_text, "info")
 
     st.divider()
 
