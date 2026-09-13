@@ -22,10 +22,11 @@ def render(
     column_intelligence_df: pd.DataFrame | None = None,
     numerical_summary: pd.DataFrame | None = None,
     categorical_summary_df: pd.DataFrame | None = None,
+    data_dictionary: dict | None = None,
 ) -> None:
     cards.section_header(
         "📊 Profile & Descriptive Intelligence",
-        "Explore schema definitions, rigorous statistical metrics, distributions, and missingness patterns.",
+        "Explore schema definitions, AI Data Dictionary, rigorous statistical metrics, distributions, and missingness patterns.",
     )
 
     if df.empty:
@@ -33,8 +34,9 @@ def render(
         return
 
     # Tabs inside Profile View
-    p_tab1, p_tab2, p_tab3, p_tab4, p_tab5 = st.tabs([
+    p_tab1, p_tab2, p_tab3, p_tab4, p_tab5, p_tab6 = st.tabs([
         "📋 Schema Explorer",
+        "📖 AI Data Dictionary",
         "🔢 Descriptive Statistics",
         "📈 Distribution Lab",
         "🎯 Outlier Analysis",
@@ -64,9 +66,32 @@ def render(
             st.dataframe(pd.DataFrame(schema_data), use_container_width=True, hide_index=True)
 
     # ----------------------------------------------------
-    # TAB 2: DESCRIPTIVE STATISTICS
+    # TAB 2: AI DATA DICTIONARY
     # ----------------------------------------------------
     with p_tab2:
+        st.markdown("#### 📖 AI Data Dictionary & Attribute Guidance")
+        if data_dictionary and isinstance(data_dictionary, dict) and data_dictionary.get("columns"):
+            dict_cols = data_dictionary["columns"]
+            dict_rows = []
+            for item in dict_cols:
+                dict_rows.append({
+                    "Attribute": item.get("name", item.get("column", "")),
+                    "Semantic Role": item.get("semantic_role", item.get("role", "feature")),
+                    "Data Type": item.get("detected_type", item.get("data_type", "unknown")),
+                    "Missing %": item.get("missing_percentage", item.get("missing_pct", 0.0)),
+                    "Unique Values": item.get("unique_count", "N/A"),
+                    "Analytical Usefulness": item.get("usefulness", item.get("interpretation", "Suitable for analysis")),
+                })
+            st.dataframe(pd.DataFrame(dict_rows), use_container_width=True, hide_index=True)
+        elif column_intelligence_df is not None and not column_intelligence_df.empty:
+            st.dataframe(column_intelligence_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("AI Data Dictionary will compile automatically when a dataset is active.")
+
+    # ----------------------------------------------------
+    # TAB 3: DESCRIPTIVE STATISTICS
+    # ----------------------------------------------------
+    with p_tab3:
         st.markdown("#### Comprehensive Numerical Statistics")
         numeric_cols = df.select_dtypes(include="number").columns
         if len(numeric_cols) > 0:
@@ -115,9 +140,9 @@ def render(
             st.dataframe(categorical_summary_df, use_container_width=True, hide_index=True)
 
     # ----------------------------------------------------
-    # TAB 3: DISTRIBUTION LAB
+    # TAB 4: DISTRIBUTION LAB
     # ----------------------------------------------------
-    with p_tab3:
+    with p_tab4:
         st.markdown("#### Skewness & Shape Classification")
         numeric_cols = df.select_dtypes(include="number").columns
         if len(numeric_cols) > 0:
@@ -175,9 +200,9 @@ def render(
             st.info("No numerical columns available for distribution analysis.")
 
     # ----------------------------------------------------
-    # TAB 4: OUTLIER ANALYSIS
+    # TAB 5: OUTLIER ANALYSIS
     # ----------------------------------------------------
-    with p_tab4:
+    with p_tab5:
         st.markdown("#### IQR Method Outlier Detection")
         numeric_cols = df.select_dtypes(include="number").columns
         if len(numeric_cols) > 0:
@@ -215,9 +240,9 @@ def render(
             st.info("No numerical columns available for outlier detection.")
 
     # ----------------------------------------------------
-    # TAB 5: MISSING VALUE INTELLIGENCE
+    # TAB 6: MISSING VALUE INTELLIGENCE
     # ----------------------------------------------------
-    with p_tab5:
+    with p_tab6:
         st.markdown("#### Completeness & Null Distribution")
         tot_cells = len(df) * len(df.columns)
         tot_missing = int(df.isna().sum().sum())

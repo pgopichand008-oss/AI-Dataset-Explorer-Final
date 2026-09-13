@@ -25,6 +25,11 @@ def render(
     quality_status: str,
     ml_score: int,
     ml_status: str,
+    health: dict | None = None,
+    prioritized_insights: dict | None = None,
+    story: dict | None = None,
+    recommendations: dict | None = None,
+    executive_intel: dict | None = None,
 ) -> None:
 
     # --------------------------------------------------------
@@ -42,12 +47,28 @@ def render(
         unsafe_allow_html=True,
     )
 
+    # Resolve exact required Final Recommendation status
+    def _resolve_verdict(score: int, status_str: str) -> str:
+        s = str(status_str).upper()
+        if "READY" in s and "NOT" not in s and "NEEDS" not in s:
+            return "READY FOR FURTHER ANALYSIS"
+        if "ATTENTION" in s or "NEEDS" in s:
+            return "NEEDS ATTENTION BEFORE ANALYSIS"
+        if "NOT" in s or "UNSUITABLE" in s:
+            return "NOT SUITABLE WITHOUT ADDITIONAL CORRECTION"
+        if score >= 80:
+            return "READY FOR FURTHER ANALYSIS"
+        elif score >= 50:
+            return "NEEDS ATTENTION BEFORE ANALYSIS"
+        else:
+            return "NOT SUITABLE WITHOUT ADDITIONAL CORRECTION"
+
     # --------------------------------------------------------
     # "WOW MOMENT" AGENT DECISION CARD
     # --------------------------------------------------------
     change_result = state.get_change_analysis()
     if change_result:
-        verdict = change_result.get("recommendation", "UNKNOWN")
+        verdict = _resolve_verdict(quality_score, change_result.get("recommendation", quality_status))
         next_act = change_result.get("next_action", "Continue analysis")
         changes_n = len(change_result.get("changes", {}).get("added_columns", [])) + len(change_result.get("changes", {}).get("removed_columns", []))
         quality_n = len(change_result.get("impact", []))
@@ -61,9 +82,13 @@ def render(
             reconsidered_count=recon_n,
         )
     else:
+        verdict = _resolve_verdict(quality_score, quality_status)
+        default_next = "Review quality findings & explore correlations"
+        if recommendations and recommendations.get("recommendations"):
+            default_next = recommendations["recommendations"][0].get("name", default_next)
         cards.wow_moment_card(
-            verdict=quality_status,
-            next_action="Review quality findings & activate change intelligence comparison",
+            verdict=verdict,
+            next_action=default_next,
             changes_count=0,
             quality_issues_count=len(df.columns[df.isna().any()]),
             reconsidered_count=0,
@@ -76,21 +101,27 @@ def render(
     missing_pct = (df.isna().sum().sum() / (rows * columns) * 100) if rows * columns else 0.0
     dup_rows = df.duplicated().sum()
 
-    story_happened = (
-        f"The dataset contains **{rows:,} records** across **{columns:,} attributes** "
-        f"({len(num_cols)} numerical, {len(categorical_columns)} categorical). "
-        f"Overall missing cell rate is **{missing_pct:.2f}%** with **{dup_rows:,} duplicate rows**."
-    )
-    story_matters = (
-        f"Data quality score is evaluated at **{quality_score}/100** ({quality_status}). "
-        + ("High completeness allows reliable statistical modeling." if missing_pct < 5 else "Missing values require targeted imputation prior to downstream ML.")
-    )
-    top_num = num_cols[0] if num_cols else (df.columns[0] if len(df.columns) > 0 else "Primary attribute")
-    top_num_2 = num_cols[1] if len(num_cols) > 1 else top_num
-    story_investigate = (
-        f"Investigate the distribution of **'{top_num}'** in the Calculation Lab, "
-        f"and evaluate its 2D/3D spatial relationship with **'{top_num_2}'**."
-    )
+    if story and isinstance(story, dict) and story.get("narrative"):
+        narr = story.get("narrative", {})
+        story_happened = narr.get("what_happened", f"The dataset contains {rows:,} records across {columns:,} attributes.")
+        story_matters = narr.get("why_it_matters", f"Data quality score is evaluated at {quality_score}/100.")
+        story_investigate = narr.get("what_to_investigate", "Explore attribute correlations and distributions.")
+    else:
+        story_happened = (
+            f"The dataset contains **{rows:,} records** across **{columns:,} attributes** "
+            f"({len(num_cols)} numerical, {len(categorical_columns)} categorical). "
+            f"Overall missing cell rate is **{missing_pct:.2f}%** with **{dup_rows:,} duplicate rows**."
+        )
+        story_matters = (
+            f"Data quality score is evaluated at **{quality_score}/100** ({quality_status}). "
+            + ("High completeness allows reliable statistical modeling." if missing_pct < 5 else "Missing values require targeted imputation prior to downstream ML.")
+        )
+        top_num = num_cols[0] if num_cols else (df.columns[0] if len(df.columns) > 0 else "Primary attribute")
+        top_num_2 = num_cols[1] if len(num_cols) > 1 else top_num
+        story_investigate = (
+            f"Investigate the distribution of **'{top_num}'** in the Calculation Lab, "
+            f"and evaluate its 2D/3D spatial relationship with **'{top_num_2}'**."
+        )
 
     cards.data_story_card(
         what_happened=story_happened,
